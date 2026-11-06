@@ -187,7 +187,12 @@ export default function App() {
         setInspectState("ready");
       }
 
-      const crawlResponse = await fetch("/api/media/crawl?"+new URLSearchParams({url:value}), { signal: controller.signal });
+      const crawlResponse = await fetch("/api/media/crawl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ url: value }),
+        signal: controller.signal
+      });
       const crawl = await crawlResponse.json().catch(() => null);
       if (crawlResponse.ok && crawl?.ok && Array.isArray(crawl.items) && crawl.items.length) {
         setInfo((prev) => prev || { title: crawl.title || safeHostname(value), author: safeHostname(value), thumbnail: null });
