@@ -289,16 +289,91 @@ export default function App() {
     downloadSessionRef.current = null;
   };
 
-  const pauseDownload = () => {
+  const getWorkerStatus = async (jobId) => {
+    const response = await fetch("/api/ytdlp/jobs/" + jobId, { cache: "no-store" });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) throw new Error(data?.error || "Could not read worker status.");
+    setDownloadMeta(data);
+    return data;
+  };
+
+  const waitForWorkerReady = async (jobId) => {
+    for (;;) {
+      const status = await getWorkerStatus(jobId);
+      const workerTotal = Number(status.totalBytes || status.total) || 0;
+      const workerBytes = Number(status.bytes) || 0;
+      if (status.status === "ready") return status;
+      if (["failed", "error", "cancelled", "interrupted"].includes(status.status)) {
+        throw new Error(status.error || "Worker download stopped.");
+      }
+      setProgress(workerTotal ? Math.min(95, Math.round((workerBytes / workerTotal) * 95)) : Math.min(90, progress + 2));
+      setProgressLabel(workerTotal ? "yt-dlp · " + formatBytes(workerBytes) + " / " + formatBytes(workerTotal) : "yt-dlp · " + (status.status || "working"));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  };
+
+  const startBrowserTransfer = async (jobId, status, audioOnly) => {
+    const fileHead = await fetch("/api/ytdlp/jobs/" + jobId + "/file", { method: "HEAD", cache: "no-store" });
+    if (!fileHead.ok) throw new Error("Unable to read generated file metadata.");
+    const total = Number(fileHead.headers.get("content-length")) || Number(status.sizeBytes) || Number(status.totalBytes) || 0;
+    if (!total) throw new Error("File size is unavailable; resumable mode cannot start.");
+    const filename = status.filename || "downly-download." + (status.extension || (audioOnly ? "mp3" : "mp4"));
+    const mime = fileHead.headers.get("content-type") || status.mime || "application/octet-stream";
+    setDownloadMeta({ ...status, total, sizeBytes: total, filename, mime, extension: status.extension || filename.split(".").pop() });
+    setProgress(0);
+    setTransferState("downloading");
+    downloadSessionRef.current = { jobId, filename, mime, total, chunks: [], nextStart: 0, controller: null };
+    await runIdmDownload(jobId, filename, mime, total, 0);
+    return { filename, total };
+  };
+
+  const pauseDownload = async () => {
     const session = downloadSessionRef.current;
-    if (session?.controller) session.controller.abort();
+    if (session?.controller) {
+      session.controller.abort();
+      return;
+    }
+    const jobId = activeJobRef.current?.jobId;
+    if (!jobId) return;
+    try {
+      const response = await fetch("/api/ytdlp/jobs/" + jobId + "/pause", { method: "POST" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.ok) throw new Error(data?.error || "Unable to pause worker job.");
+      setDownloadMeta(data);
+      setTransferState("paused");
+      setLoading(false);
+      setProgressLabel("Worker paused · resume anytime");
+    } catch (e) {
+      setError(e?.message || "Unable to pause download.");
+    }
   };
 
   const resumeDownload = async () => {
     const session = downloadSessionRef.current;
-    if (!session) return;
+    if (session) {
+      try {
+        await runIdmDownload(session.jobId, session.filename, session.mime, session.total, session.nextStart);
+      } catch (e) {
+        setTransferState("error");
+        setLoading(false);
+        setError(e?.message || "Unable to resume download.");
+      }
+      return;
+    }
+
+    const jobId = activeJobRef.current?.jobId;
+    if (!jobId) return;
     try {
-      await runIdmDownload(session.jobId, session.filename, session.mime, session.total, session.nextStart);
+      setLoading(true);
+      setTransferState("preparing");
+      const response = await fetch("/api/ytdlp/jobs/" + jobId + "/resume", { method: "POST" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.ok) throw new Error(data?.error || "Unable to resume worker job.");
+      setDownloadMeta(data);
+      const status = await waitForWorkerReady(jobId);
+      const audioOnly = Boolean(status.audio_only);
+      const result = await startBrowserTransfer(jobId, status, audioOnly);
+      saveHistory({url:url.trim(),title:info?.title||"YouTube video",thumbnail:info?.thumbnail,format:audioOnly?"MP3":"MP4",quality,createdAt:new Date().toISOString(),resumable:true,jobId,filename:result.filename,sizeBytes:result.total});
     } catch (e) {
       setTransferState("error");
       setLoading(false);
@@ -309,7 +384,8 @@ export default function App() {
   const cancelDownload = async () => {
     const session = downloadSessionRef.current;
     if (session?.controller) session.controller.abort();
-    if (session?.jobId) await fetch("/api/ytdlp/jobs/" + session.jobId, { method: "DELETE" }).catch(() => {});
+    const jobId = activeJobRef.current?.jobId;
+    if (jobId) await fetch("/api/ytdlp/jobs/" + jobId + "/cancel", { method: "POST" }).catch(() => {});
     downloadSessionRef.current = null;
     activeJobRef.current = null;
     setTransferState("cancelled");
@@ -364,33 +440,9 @@ export default function App() {
 
         const jobId = jobData.id;
         activeJobRef.current = { jobId };
-        let status;
-        for (;;) {
-          const statusResponse = await fetch("/api/ytdlp/jobs/" + jobId, { cache: "no-store" });
-          status = await statusResponse.json().catch(() => null);
-          if (!statusResponse.ok || !status?.ok) throw new Error(status?.error || "Could not read download status.");
-          setDownloadMeta(status);
-          const prepTotal = Number(status.total) || 0;
-          const prepBytes = Number(status.bytes) || 0;
-          if (status.status === "error") throw new Error(status.error || "Download preparation failed.");
-          if (status.status === "ready") break;
-          setProgress(prepTotal ? Math.min(95, Math.round((prepBytes / prepTotal) * 95)) : Math.min(90, progress + 2));
-          setProgressLabel(prepTotal ? "yt-dlp · " + formatBytes(prepBytes) + " / " + formatBytes(prepTotal) : "yt-dlp is preparing your file...");
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-
-        const fileHead = await fetch("/api/ytdlp/jobs/" + jobId + "/file", { method: "HEAD", cache: "no-store" });
-        if (!fileHead.ok) throw new Error("Unable to read generated file metadata.");
-        const total = Number(fileHead.headers.get("content-length")) || Number(status.sizeBytes) || 0;
-        if (!total) throw new Error("File size is unavailable; resumable mode cannot start.");
-        const filename = status.filename || "downly-download." + (status.extension || (audioOnly ? "mp3" : "mp4"));
-        const mime = fileHead.headers.get("content-type") || status.mime || "application/octet-stream";
-        setDownloadMeta({ ...status, total, sizeBytes: total, filename, mime, extension: status.extension || filename.split(".").pop() });
-        setProgress(0);
-        setTransferState("downloading");
-        downloadSessionRef.current = { jobId, filename, mime, total, chunks: [], nextStart: 0, controller: null };
-        await runIdmDownload(jobId, filename, mime, total, 0);
-        saveHistory({url:url.trim(),title:info?.title||"YouTube video",thumbnail:info?.thumbnail,format:audioOnly?"MP3":"MP4",quality,createdAt:new Date().toISOString(),resumable:true,jobId,filename,sizeBytes:total});
+        const status = await waitForWorkerReady(jobId);
+        const result = await startBrowserTransfer(jobId, status, audioOnly);
+        saveHistory({url:url.trim(),title:info?.title||"YouTube video",thumbnail:info?.thumbnail,format:audioOnly?"MP3":"MP4",quality,createdAt:new Date().toISOString(),resumable:true,jobId,filename:result.filename,sizeBytes:result.total});
         return;
       }
 
