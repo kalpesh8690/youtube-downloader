@@ -355,7 +355,7 @@ export default function App() {
         const isAudioMp3 = media.type === "audio" && ext === "mp3";
         const needsMp3Conversion = media.type === "audio" && !isAudioMp3;
         const isDirect = /\.(?:mp4|webm|m4v|mov|mkv|mp3|m4a|aac|wav|ogg|flac)(?:$|\?)/i.test(media.url);
-        const outputExt = needsMp3Conversion ? "mp3" : (ext || (media.type === "audio" ? "mp3" : "mp4"));
+        const outputExt = needsMp3Conversion ? "mp3" : (media.type === "stream" ? "mp4" : (ext || (media.type === "audio" ? "mp3" : "mp4")));
         const filename = ((info?.title || "downly-download").replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 140) || "downly-download") + "." + outputExt;
         submitNativeDownload({
           url: isDirect && !needsMp3Conversion ? url.trim() : media.url,
@@ -591,7 +591,7 @@ export default function App() {
                   <p className="mt-2 text-[11px] leading-5 text-slate-500">Clicking Download opens a native attachment response so Chrome's Downloads manager receives the bytes directly. Downly does not first save the finished file on the worker.</p>
                 </div>
               )}
-              <button onClick={handleDownload} disabled={loading || (!availableFormats.length && !detectedMedia.some((item) => item.url === selectedMediaUrl && (item.type === "video" || item.type === "audio")))} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 font-bold transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50">
+              <button onClick={handleDownload} disabled={loading || (!availableFormats.length && !detectedMedia.some((item) => item.url === selectedMediaUrl && (item.type === "video" || item.type === "audio" || item.type === "stream")))} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 font-bold transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50">
                 {loading ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
                 {loading ? "Preparing..." : availableFormats.length ? (format === "MP3" ? "Download MP3" : "Download " + (availableFormats.find((x) => x.id === quality)?.label || "selected video")) : selectedMediaUrl ? "Download selected media" : "Inspect media first"}
               </button>
