@@ -4,8 +4,8 @@ function workerUrl() {
 
 export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(204).end();
-  if (req.method !== "POST") {
-    res.setHeader("Allow", "POST, OPTIONS");
+  if (req.method !== "GET" && req.method !== "POST") {
+    res.setHeader("Allow", "GET, POST, OPTIONS");
     return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
 
@@ -13,9 +13,17 @@ export default async function handler(req, res) {
   if (!base) return res.status(503).json({ ok: false, error: "yt-dlp worker is not configured" });
 
   let body = req.body;
-  if (typeof body === "string") {
-    try { body = JSON.parse(body); }
-    catch { return res.status(400).json({ ok: false, error: "Invalid JSON body" }); }
+  if (req.method === "GET") {
+    body = {
+      url: req.query?.url,
+      format: req.query?.format,
+      audio_only: req.query?.audio_only === "true"
+    };
+  } else {
+    if (typeof body === "string") {
+      try { body = JSON.parse(body); }
+      catch { return res.status(400).json({ ok: false, error: "Invalid JSON body" }); }
+    }
   }
 
   if (!body || typeof body.url !== "string") {
