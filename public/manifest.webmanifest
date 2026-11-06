@@ -1,0 +1,12 @@
+{
+  "name": "Downly — Media Downloader",
+  "short_name": "Downly",
+  "description": "Inspect public media links and download authorized media in your browser.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#060914",
+  "theme_color": "#070b14",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
