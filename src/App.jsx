@@ -9,8 +9,8 @@ const formats = ["Original"];
 const qualities = ["Source"];
 const features = [
   ["Lightning fast", "A clean workflow designed to minimize clicks.", Zap],
-  ["Multiple formats", "Prepare MP4, MP3 and WEBM outputs.", FileVideo],
-  ["Quality control", "Pick the resolution that fits your needs.", Check],
+  ["Direct media", "Download public direct video and audio files you are authorized to save.", FileVideo],
+  ["Original quality", "Keep the source file unchanged without transcoding.", Check],
   ["Responsive", "A polished experience on phones and desktops.", Globe]
 ];
 
@@ -33,7 +33,7 @@ function friendlyError(error, status) {
 }
 
 
-async function downloadAuthorizedMedia(mediaUrl) {
+async function downloadAuthorizedMedia(mediaUrl, onProgress = () => {}) {
   const response = await fetch("/api/download", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "*/*" },
@@ -46,13 +46,38 @@ async function downloadAuthorizedMedia(mediaUrl) {
     throw new Error(data?.error || friendlyError(null, response.status));
   }
 
-  const blob = await response.blob();
+  const chunks = [];
+  const reader = response.body?.getReader();
+  const contentLength = Number(response.headers.get("Content-Length"));
+  let received = 0;
+  if (reader) {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.byteLength;
+      if (contentLength > 0) {
+        onProgress(Math.min(92, 20 + Math.round((received / contentLength) * 72)));
+      } else {
+        onProgress(55);
+      }
+    }
+  } else {
+    const blobPart = await response.blob();
+    chunks.push(blobPart);
+  }
+
+  const blob = new Blob(chunks, { type: response.headers.get("Content-Type") || "application/octet-stream" });
   if (!blob.size) throw new Error("The media source returned an empty file.");
+  onProgress(95);
 
   const disposition = response.headers.get("Content-Disposition") || "";
   const utf8Name = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
   const quotedName = disposition.match(/filename="?([^";]+)"?/i)?.[1];
-  const filename = utf8Name ? decodeURIComponent(utf8Name) : (quotedName || "downly-download");
+  let filename = quotedName || "downly-download";
+  if (utf8Name) {
+    try { filename = decodeURIComponent(utf8Name); } catch {}
+  }
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = objectUrl;
@@ -65,8 +90,8 @@ async function downloadAuthorizedMedia(mediaUrl) {
 
 export default function App() {
   const [url, setUrl] = useState("");
-  const [quality, setQuality] = useState("1080p");
-  const [format, setFormat] = useState("MP4");
+  const [quality, setQuality] = useState("Source");
+  const [format, setFormat] = useState("Original");
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
@@ -99,6 +124,7 @@ export default function App() {
     setError("");
     setInfo(null);
     setDetectedMedia([]);
+    setSelectedMediaUrl("");
     setProgress(0);
 
     if (!url.trim()) {
@@ -151,7 +177,7 @@ export default function App() {
       setProgressLabel("Detection complete");
 
       if ((data.media || []).length) {
-        setMessage(`Detected ${data.media.length} public media source(s). Browser download requires the source to allow CORS.`);
+        setMessage(`Detected ${data.media.length} public media source(s). Select a direct audio/video file below to download.`);
       } else {
         setMessage("No public direct video/audio URL was exposed by this page. Protected, DRM, login-only and player-internal streams are not bypassed.");
       }
@@ -195,7 +221,10 @@ export default function App() {
       setLoading(true);
       setProgressLabel("Connecting to the media source...");
       setProgress(20);
-      await downloadAuthorizedMedia(media.url);
+      await downloadAuthorizedMedia(media.url, (value) => {
+        setProgress(value);
+        setProgressLabel("Downloading original media...");
+      });
       setProgress(100);
       setProgressLabel("Download ready");
       setMessage("Your original media file was downloaded. No format conversion was applied.");
@@ -262,7 +291,7 @@ export default function App() {
             <span className="bg-gradient-to-r from-indigo-300 via-violet-300 to-fuchsia-300 bg-clip-text text-transparent">Keep it simple.</span>
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-base leading-7 text-slate-400 sm:text-lg">
-            Paste a video link, choose your format and quality, and get your download workflow ready in seconds.
+            Paste a webpage or direct media URL to detect public video/audio files and download the original media you are authorized to save.
           </p>
 
           <div className="glass mx-auto mt-10 max-w-3xl rounded-[28px] p-2 shadow-glow sm:p-3">
@@ -397,7 +426,7 @@ export default function App() {
         <section id="how" className="mx-auto max-w-5xl px-5 py-20 sm:px-8">
           <div className="text-center"><p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">How it works</p><h2 className="mt-3 text-3xl font-bold">Three simple steps</h2></div>
           <div className="mt-10 grid gap-4 md:grid-cols-3">
-            {[["01", "Paste your link", "Add a supported video URL."], ["02", "Choose output", "Select format and quality."], ["03", "Start download", "The API validates the URL and returns video metadata."]].map(([n, t, d]) => <div className="glass rounded-2xl p-6" key={n}><span className="text-sm font-bold text-indigo-300">{n}</span><h3 className="mt-8 font-bold">{t}</h3><p className="mt-2 text-sm leading-6 text-slate-500">{d}</p></div>)}
+            {[["01", "Paste your link", "Paste a public webpage or direct media file URL."], ["02", "Choose output", "Choose one of the detected direct media files."], ["03", "Start download", "The download API securely streams the original media file."]].map(([n, t, d]) => <div className="glass rounded-2xl p-6" key={n}><span className="text-sm font-bold text-indigo-300">{n}</span><h3 className="mt-8 font-bold">{t}</h3><p className="mt-2 text-sm leading-6 text-slate-500">{d}</p></div>)}
           </div>
         </section>
 
