@@ -21,7 +21,7 @@ Termux API :3000
           yt-dlp + FFmpeg
 ```
 
-The worker performs media inspection and preparation. Once a job is ready, the UI opens the same-origin file endpoint with an attachment response so Chrome handles the actual file transfer in its native Downloads manager instead of buffering the file in React memory. HTTP range requests remain supported by the file endpoint. citeturn889582search3turn889582search0
+The worker performs media inspection and preparation. Once a job is ready, the UI opens the same-origin file endpoint with an attachment response so Chrome handles the actual file transfer in its native Downloads manager instead of buffering the file in React memory. HTTP range requests remain supported by the file endpoint.
 
 ## Automatic inspection
 
@@ -38,7 +38,7 @@ The worker uses yt-dlp's metadata mode to discover:
 - resolution, FPS, codec, container and approximate/exact size
 - format IDs and safe selectors for downloading
 
-yt-dlp documents `--dump-single-json` for metadata extraction and exposes format IDs and fields such as extension, codecs, resolution and filesize. citeturn301062search1turn620834search7
+yt-dlp documents `--dump-single-json` for metadata extraction and exposes format IDs and fields such as extension, codecs, resolution and filesize.
 
 ## API binding
 
@@ -52,11 +52,11 @@ yt-dlp documents `--dump-single-json` for metadata extraction and exposes format
 - `POST /api/ytdlp/jobs/:id/cancel` → worker cancel
 - `GET|HEAD /api/ytdlp/jobs/:id/file` → authenticated worker file proxy
 
-The worker exposes structured progress including percent, downloaded bytes, total bytes, speed and ETA. yt-dlp's progress model includes downloaded bytes, total bytes, speed and ETA. citeturn301062search0
+The worker exposes structured progress including percent, downloaded bytes, total bytes, speed and ETA. yt-dlp's progress model includes downloaded bytes, total bytes, speed and ETA.
 
 ## Supported media
 
-Downly uses yt-dlp's extractor ecosystem for public/authorized media URLs. yt-dlp maintains a large extractor list and also has a generic extractor for some URLs that are not explicitly listed. Support is not universal because sites change their delivery systems. citeturn620834search0turn620834search2
+Downly uses yt-dlp's extractor ecosystem for public/authorized media URLs. yt-dlp maintains a large extractor list and also has a generic extractor for some URLs that are not explicitly listed. Support is not universal because sites change their delivery systems.
 
 For YouTube and other sites, only media you own or are authorized to save should be downloaded. The project does not implement DRM or access-control bypassing.
 
@@ -117,7 +117,7 @@ The generated tunnel hostname changes when a Quick Tunnel is restarted.
 
 - A website may require login, cookies, special tokens, geographic access or other conditions.
 - Some URLs are pages rather than downloadable media and may expose no public media URL.
-- YouTube's available formats can vary by video and by current extractor/client requirements. yt-dlp's current documentation notes that some YouTube formats/features may require externally supplied proof-of-origin tokens. citeturn620834search11
+- YouTube's available formats can vary by video and by current extractor/client requirements. yt-dlp's current documentation notes that some YouTube formats/features may require externally supplied proof-of-origin tokens.
 - Chrome's native download manager owns the final file-transfer progress after the worker finishes preparing the file; the webpage shows real-time yt-dlp preparation progress.
 
 ## License / usage
