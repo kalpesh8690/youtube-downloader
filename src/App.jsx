@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle, ArrowRight, Check, Download, FileVideo, Globe, History,
   Link2, Loader2, Menu, Play, RefreshCw, ShieldCheck, Sparkles,
@@ -111,6 +111,12 @@ export default function App() {
   const [detectedMedia, setDetectedMedia] = useState([]);
   const [selectedMediaUrl, setSelectedMediaUrl] = useState("");
   const [scanMeta, setScanMeta] = useState({ pagesScanned: 0, count: 0, directCount: 0, streamCount: 0, partial: false });
+  const [downloadMeta, setDownloadMeta] = useState(null);
+  const [transferState, setTransferState] = useState("idle");
+  const [downloadSpeed, setDownloadSpeed] = useState(0);
+  const [downloadEta, setDownloadEta] = useState(0);
+  const downloadSessionRef = useRef(null);
+  const activeJobRef = useRef(null);
 
   const valid = useMemo(() => { try { const u = new URL(url); return u.protocol === "http:" || u.protocol === "https:"; } catch { return false; } }, [url]);
 
@@ -217,6 +223,102 @@ export default function App() {
 
   const retry = () => submit();
 
+  const runIdmDownload = async (jobId, filename, mime, total, startAt = 0) => {
+    const session = downloadSessionRef.current || {
+      jobId,
+      filename,
+      mime,
+      total,
+      chunks: [],
+      nextStart: startAt,
+      controller: null
+    };
+    session.jobId = jobId;
+    session.filename = filename;
+    session.mime = mime;
+    session.total = total;
+    downloadSessionRef.current = session;
+
+    setTransferState("downloading");
+    setLoading(true);
+    const chunkSize = 8 * 1024 * 1024;
+    const startedAt = Date.now();
+
+    while (session.nextStart < total) {
+      const start = session.nextStart;
+      const end = Math.min(total - 1, start + chunkSize - 1);
+      const controller = new AbortController();
+      session.controller = controller;
+      try {
+        const response = await fetch("/api/ytdlp/jobs/" + jobId + "/file", {
+          headers: { Range: "bytes=" + start + "-" + end },
+          cache: "no-store",
+          signal: controller.signal
+        });
+        if (response.status !== 206) throw new Error("Server did not return a resumable 206 response.");
+        const buffer = await response.arrayBuffer();
+        session.chunks.push({ start, data: new Uint8Array(buffer) });
+        session.nextStart = end + 1;
+        const elapsed = Math.max(0.1, (Date.now() - startedAt) / 1000);
+        const speed = Math.round(session.nextStart / elapsed);
+        setProgress(Math.min(99, Math.round((session.nextStart / total) * 100)));
+        setDownloadSpeed(speed);
+        setDownloadEta(speed ? Math.ceil((total - session.nextStart) / speed) : 0);
+        setProgressLabel("IDM download · " + formatBytes(session.nextStart) + " / " + formatBytes(total));
+      } catch (e) {
+        if (e?.name === "AbortError") {
+          setTransferState("paused");
+          setLoading(false);
+          setProgressLabel("Paused · " + formatBytes(session.nextStart) + " / " + formatBytes(total));
+          return;
+        }
+        throw e;
+      }
+    }
+
+    session.chunks.sort((a,b) => a.start - b.start);
+    const blob = new Blob(session.chunks.map((x) => x.data), { type: mime || "application/octet-stream" });
+    saveBlob(blob, filename);
+    setProgress(100);
+    setDownloadSpeed(0);
+    setDownloadEta(0);
+    setTransferState("complete");
+    setProgressLabel("Download complete");
+    setMessage("Download complete · " + filename + " · " + formatBytes(total));
+    setLoading(false);
+    downloadSessionRef.current = null;
+  };
+
+  const pauseDownload = () => {
+    const session = downloadSessionRef.current;
+    if (session?.controller) session.controller.abort();
+  };
+
+  const resumeDownload = async () => {
+    const session = downloadSessionRef.current;
+    if (!session) return;
+    try {
+      await runIdmDownload(session.jobId, session.filename, session.mime, session.total, session.nextStart);
+    } catch (e) {
+      setTransferState("error");
+      setLoading(false);
+      setError(e?.message || "Unable to resume download.");
+    }
+  };
+
+  const cancelDownload = async () => {
+    const session = downloadSessionRef.current;
+    if (session?.controller) session.controller.abort();
+    if (session?.jobId) await fetch("/api/ytdlp/jobs/" + session.jobId, { method: "DELETE" }).catch(() => {});
+    downloadSessionRef.current = null;
+    activeJobRef.current = null;
+    setTransferState("cancelled");
+    setLoading(false);
+    setProgress(0);
+    setProgressLabel("Cancelled");
+    setMessage("Download cancelled.");
+  };
+
   const handleDownload = async () => {
     setError("");
     setMessage("");
@@ -242,64 +344,53 @@ export default function App() {
       if (youtube) {
         const audioOnly = format === "MP3";
         const workerFormat = audioOnly ? "bestaudio" : "best";
-        setProgress(8);
-        setProgressLabel("Creating resumable download job...");
+
+        if (activeJobRef.current && downloadSessionRef.current && transferState === "paused") {
+          await resumeDownload();
+          return;
+        }
+
+        setProgress(5);
+        setProgressLabel("Creating IDM download job...");
+        setTransferState("preparing");
 
         const jobResponse = await fetch("/api/ytdlp/jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            url: url.trim(),
-            format: workerFormat,
-            audio_only: audioOnly
-          })
+          body: JSON.stringify({ url: url.trim(), format: workerFormat, audio_only: audioOnly })
         });
         const jobData = await jobResponse.json().catch(() => null);
-        if (!jobResponse.ok || !jobData?.id) {
-          throw new Error(jobData?.error || "Could not create download job.");
-        }
+        if (!jobResponse.ok || !jobData?.id) throw new Error(jobData?.error || "Could not create download job.");
 
         const jobId = jobData.id;
+        activeJobRef.current = { jobId };
         let status;
         for (;;) {
           const statusResponse = await fetch("/api/ytdlp/jobs/" + jobId, { cache: "no-store" });
           status = await statusResponse.json().catch(() => null);
           if (!statusResponse.ok || !status?.ok) throw new Error(status?.error || "Could not read download status.");
+          setDownloadMeta(status);
+          const prepTotal = Number(status.total) || 0;
+          const prepBytes = Number(status.bytes) || 0;
           if (status.status === "error") throw new Error(status.error || "Download preparation failed.");
           if (status.status === "ready") break;
-
-          const total = Number(status.total) || 0;
-          const bytes = Number(status.bytes) || 0;
-          const pct = total ? Math.min(95, Math.round((bytes / total) * 95)) : Math.min(90, progress + 2);
-          setProgress(pct);
-          setProgressLabel(total
-            ? "Preparing file " + formatBytes(bytes) + " / " + formatBytes(total)
-            : "yt-dlp is preparing your file...");
-          await new Promise((resolve) => setTimeout(resolve, 1200));
+          setProgress(prepTotal ? Math.min(95, Math.round((prepBytes / prepTotal) * 95)) : Math.min(90, progress + 2));
+          setProgressLabel(prepTotal ? "yt-dlp · " + formatBytes(prepBytes) + " / " + formatBytes(prepTotal) : "yt-dlp is preparing your file...");
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
 
-        const fileUrl = "/api/ytdlp/jobs/" + jobId + "/file";
-        const anchor = document.createElement("a");
-        anchor.href = fileUrl;
-        anchor.download = status.filename || "";
-        anchor.rel = "noopener";
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-
-        setProgress(100);
-        setProgressLabel("Download started — resumable");
-        setMessage("Download started. The file endpoint supports HTTP Range requests, so an interrupted browser download can resume instead of restarting from zero.");
-        saveHistory({
-          url: url.trim(),
-          title: info?.title || "YouTube video",
-          thumbnail: info?.thumbnail,
-          format: audioOnly ? "MP3" : "MP4",
-          quality,
-          createdAt: new Date().toISOString(),
-          resumable: true,
-          jobId
-        });
+        const fileHead = await fetch("/api/ytdlp/jobs/" + jobId + "/file", { method: "HEAD", cache: "no-store" });
+        if (!fileHead.ok) throw new Error("Unable to read generated file metadata.");
+        const total = Number(fileHead.headers.get("content-length")) || Number(status.sizeBytes) || 0;
+        if (!total) throw new Error("File size is unavailable; resumable mode cannot start.");
+        const filename = status.filename || "downly-download." + (status.extension || (audioOnly ? "mp3" : "mp4"));
+        const mime = fileHead.headers.get("content-type") || status.mime || "application/octet-stream";
+        setDownloadMeta({ ...status, total, sizeBytes: total, filename, mime, extension: status.extension || filename.split(".").pop() });
+        setProgress(0);
+        setTransferState("downloading");
+        downloadSessionRef.current = { jobId, filename, mime, total, chunks: [], nextStart: 0, controller: null };
+        await runIdmDownload(jobId, filename, mime, total, 0);
+        saveHistory({url:url.trim(),title:info?.title||"YouTube video",thumbnail:info?.thumbnail,format:audioOnly?"MP3":"MP4",quality,createdAt:new Date().toISOString(),resumable:true,jobId,filename,sizeBytes:total});
         return;
       }
 
@@ -395,15 +486,36 @@ export default function App() {
               </button>
             </div>
 
-            {(loading || progress > 0) && (
+            {(loading || progress > 0 || downloadMeta) && (
               <div className="px-3 pb-1 pt-4 text-left">
                 <div className="mb-2 flex items-center justify-between text-xs">
-                  <span className="text-slate-400">{progressLabel}</span>
+                  <span className="truncate pr-3 text-slate-400">{progressLabel}</span>
                   <span className="font-bold text-indigo-200">{progress}%</span>
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-white/10" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progress}>
-                  <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 transition-all duration-500" style={{ width: `${progress}%` }} />
+                  <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 transition-all duration-300" style={{ width: `${progress}%` }} />
                 </div>
+                {downloadMeta && (
+                  <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-xs">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <div><span className="block text-slate-500">File</span><b className="truncate">{downloadMeta.filename || "—"}</b></div>
+                      <div><span className="block text-slate-500">Type</span><b>{String(downloadMeta.extension || "—").toUpperCase()}</b></div>
+                      <div><span className="block text-slate-500">Size</span><b>{downloadMeta.sizeBytes ? formatBytes(Number(downloadMeta.sizeBytes)) : "Calculating..."}</b></div>
+                      <div><span className="block text-slate-500">Speed</span><b>{downloadSpeed ? formatBytes(downloadSpeed) + "/s" : "—"}</b></div>
+                    </div>
+                    {downloadEta > 0 && <p className="mt-2 text-slate-500">ETA {downloadEta}s · Range chunks 8 MB · Resume supported</p>}
+                    {(transferState === "downloading" || transferState === "paused") && (
+                      <div className="mt-3 flex gap-2">
+                        {transferState === "downloading" ? (
+                          <button onClick={pauseDownload} className="flex-1 rounded-xl border border-white/10 px-3 py-2 font-semibold hover:bg-white/5">Pause</button>
+                        ) : (
+                          <button onClick={resumeDownload} className="flex-1 rounded-xl bg-indigo-500 px-3 py-2 font-semibold hover:bg-indigo-400">Resume</button>
+                        )}
+                        <button onClick={cancelDownload} className="rounded-xl border border-rose-400/20 px-4 py-2 font-semibold text-rose-200 hover:bg-rose-500/10">Cancel</button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -508,9 +620,9 @@ export default function App() {
                   <p className="mt-2 text-[11px] leading-5 text-slate-500">Direct files are downloadable in their original format. STREAM/EMBED entries are detected for visibility but are not extracted or converted.</p>
                 </div>
               )}
-              <button onClick={handleDownload} disabled={loading || (isYouTube(url) ? !info?.id : !detectedMedia.some((item) => item.url === selectedMediaUrl && (item.type === "video" || item.type === "audio")))} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 font-bold transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50">
+              <button onClick={handleDownload} disabled={loading || (isYouTube(url) ? (!info?.id || transferState === "downloading") : !detectedMedia.some((item) => item.url === selectedMediaUrl && (item.type === "video" || item.type === "audio")))} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 font-bold transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50">
                 {loading ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
-                {loading ? "Starting..." : isYouTube(url) ? (format === "MP3" ? "Download MP3" : "Download video") : selectedMediaUrl ? "Download selected media" : "Select direct media to download"}
+                {loading ? "Preparing..." : isYouTube(url) && transferState === "paused" ? "Resume download" : isYouTube(url) ? (format === "MP3" ? "Download MP3" : "Download video") : selectedMediaUrl ? "Download selected media" : "Select direct media to download"}
               </button>
             </div>
           </div>
