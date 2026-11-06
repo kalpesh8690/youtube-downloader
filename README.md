@@ -1,67 +1,125 @@
 # Downly
 
-React + Vite frontend with secure Vercel Node API routes for inspecting public webpages and streaming direct media files.
+Production-oriented React + Vite media downloader UI backed by a local Termux/Android yt-dlp worker.
 
-## Run locally
+## Architecture
 
+```
+Chrome / Android
+   ↓
+Downly React UI
+   ↓
+Termux API :3000
+   ├── /api/media/info
+   ├── /api/ytdlp/jobs
+   ├── /api/ytdlp/jobs/:id
+   ├── /api/ytdlp/jobs/:id/pause|resume|cancel
+   └── /api/ytdlp/jobs/:id/file
+              ↓
+       Downly Worker :8080
+              ↓
+          yt-dlp + FFmpeg
+```
+
+The worker performs media inspection and preparation. Once a job is ready, the UI opens the same-origin file endpoint with an attachment response so Chrome handles the actual file transfer in its native Downloads manager instead of buffering the file in React memory. HTTP range requests remain supported by the file endpoint. citeturn889582search3turn889582search0
+
+## Automatic inspection
+
+When a valid HTTP(S) URL is pasted/entered, Downly automatically calls:
+
+`POST /api/media/info`
+
+The worker uses yt-dlp's metadata mode to discover:
+
+- title, uploader/channel and thumbnail
+- duration and upload date when available
+- extractor/site
+- available video/audio formats
+- resolution, FPS, codec, container and approximate/exact size
+- format IDs and safe selectors for downloading
+
+yt-dlp documents `--dump-single-json` for metadata extraction and exposes format IDs and fields such as extension, codecs, resolution and filesize. citeturn301062search1turn620834search7
+
+## API binding
+
+### Termux API
+
+- `POST /api/media/info` → worker `POST /v1/inspect`
+- `POST /api/ytdlp/jobs` → worker `POST /v1/jobs`
+- `GET /api/ytdlp/jobs/:id` → worker `GET /v1/jobs/:id`
+- `POST /api/ytdlp/jobs/:id/pause` → worker pause
+- `POST /api/ytdlp/jobs/:id/resume` → worker resume
+- `POST /api/ytdlp/jobs/:id/cancel` → worker cancel
+- `GET|HEAD /api/ytdlp/jobs/:id/file` → authenticated worker file proxy
+
+The worker exposes structured progress including percent, downloaded bytes, total bytes, speed and ETA. yt-dlp's progress model includes downloaded bytes, total bytes, speed and ETA. citeturn301062search0
+
+## Supported media
+
+Downly uses yt-dlp's extractor ecosystem for public/authorized media URLs. yt-dlp maintains a large extractor list and also has a generic extractor for some URLs that are not explicitly listed. Support is not universal because sites change their delivery systems. citeturn620834search0turn620834search2
+
+For YouTube and other sites, only media you own or are authorized to save should be downloaded. The project does not implement DRM or access-control bypassing.
+
+## Termux setup
+
+### Worker
+
+```bash
+cd ~/downly-worker
+git pull origin main
+
+export WORKER_TOKEN="test-downly-123"
+python server.py
+```
+
+### Frontend/API
+
+```bash
+cd ~/youtube-downloader
+git pull origin main
 npm install
-npm run dev
+npm run build
 
-## API
+export YTDLP_WORKER_URL="http://127.0.0.1:8080"
+export YTDLP_WORKER_TOKEN="test-downly-123"
 
-POST /api/detect
-Body: { "url": "https://example.com/page" }
+node termux/server.mjs
+```
 
-Scans the submitted page and up to 5 additional same-origin HTML pages (6 total), then returns public media URLs discovered in media tags, metadata, links and inline player configuration. A crawl is bounded by page count and response size.
+Open `http://127.0.0.1:3000`.
 
-GET /api/detect?url=...
-Same scan operation using a query parameter.
+### Cloudflare Quick Tunnel
 
-GET /api/download?url=...
-Streams a direct public media file to the browser using Content-Disposition. Browser downloads support range requests when the upstream host supports them.
+If remote phone access is required:
 
-POST /api/download
-Body: { "url": "https://cdn.example.com/video.mp4" }
+```bash
+cloudflared tunnel --url http://127.0.0.1:3000
+```
 
-Streams the direct media file to the caller. The server validates public DNS/IP targets and blocks local/private network destinations.
+The generated tunnel hostname changes when a Quick Tunnel is restarted.
 
-## Media support
+## Product features
 
-Recognizes common video types including MP4, M4V, MKV, WebM, MOV, AVI, MPG/MPEG, VOB, TS/MTS/M2TS, 3GP, FLV, WMV, ASF, OGV, RM/RMVB and MXF, plus common audio types including MP3, M4A, AAC, WAV, OGG, Opus, FLAC, AIFF, APE and WMA.
+- Automatic URL inspection
+- Universal yt-dlp format discovery
+- Quality/format selector
+- Real-time worker progress, speed and ETA
+- Native Chrome Downloads handoff
+- HTTP range support
+- Pause/resume/cancel while the worker is preparing media
+- Local download history
+- Clipboard paste
+- Retry and actionable errors
+- Responsive dark UI
+- Bounded media discovery fallback for ordinary webpages
 
-The download API preserves the source file and streams it without transcoding. It does not convert video/audio into another codec or container. Output conversion (for example, AVI to MP4 or video to MP3) requires an FFmpeg worker on a separate container host; Vercel's serverless API is not used as a long-running media transcoder.
+## Limitations
 
-## Platform limitations
+- A website may require login, cookies, special tokens, geographic access or other conditions.
+- Some URLs are pages rather than downloadable media and may expose no public media URL.
+- YouTube's available formats can vary by video and by current extractor/client requirements. yt-dlp's current documentation notes that some YouTube formats/features may require externally supplied proof-of-origin tokens. citeturn620834search11
+- Chrome's native download manager owns the final file-transfer progress after the worker finishes preparing the file; the webpage shows real-time yt-dlp preparation progress.
 
-- The service does not extract or bypass protected YouTube streams, DRM, login-only media, signed/private sessions, or player-internal blob URLs.
-- JavaScript-only players may not expose media URLs in server-readable HTML.
-- HLS/DASH manifests are detected and reported, but are not merged into an MP4 file by this API.
-- Some hosts block server-side requests, require cookies or require geographic/session access; there is no universal downloader for every URL.
-- Only download content that you own or are authorized to save.
+## License / usage
 
-## Configuration
-
-Optional DOWNLOAD_MAX_BYTES sets the maximum streamed file size (default 500 MiB; hard cap 2 GiB). Vercel function duration is configured in vercel.json.
-
-
-## yt-dlp worker
-
-The repository now includes a separate Docker/Python worker under worker/. It uses yt-dlp and FFmpeg and is intended for authorized media processing.
-
-Build:
-docker build -t downly-ytdlp-worker ./worker
-
-Run:
-docker run --rm -p 8080:8080 -e ENABLE_YTDLP=true -e ALLOW_YOUTUBE=false -e WORKER_TOKEN=change-me downly-ytdlp-worker
-
-Worker health:
-GET /health
-
-Worker media endpoint:
-POST /v1/media/download
-
-The Vercel proxy endpoint is POST /api/ytdlp/download. Configure YTDLP_WORKER_URL and YTDLP_WORKER_TOKEN in Vercel.
-
-YouTube processing is disabled by default. Enable it only for content you own or are authorized to process. The worker does not implement DRM or access-control bypassing.
-
-yt-dlp currently recommends Python 3.11+, FFmpeg/ffprobe, yt-dlp-ejs and a supported JavaScript runtime for full YouTube support.
+Use Downly only for media you own or are authorized to save, and respect each site's terms and applicable law.
