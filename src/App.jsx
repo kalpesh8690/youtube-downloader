@@ -28,68 +28,24 @@ function isYouTube(value) {
 }
 
 function friendlyError(error, status) {
-  if (status === 400) return error || "Please enter a valid YouTube URL.";
+  if (status === 400) return error || "Please enter a valid public media URL.";
   if (status === 404) return error || "Video information is unavailable.";
   if (status === 405) return "This request method is not supported.";
   if (status === 429) return "Too many requests. Please wait a moment and try again.";
-  if (status >= 500) return "The server could not reach the video service. Please try again.";
+  if (status >= 500) return error || "The server could not inspect or reach this media source. Please try again.";
   return error || "Something went wrong. Please try again.";
 }
 
 
-async function downloadAuthorizedMedia(mediaUrl, onProgress = () => {}) {
-  const response = await fetch("/api/download", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "*/*" },
-    body: JSON.stringify({ url: mediaUrl })
-  });
-
-  if (!response.ok) {
-    let data = null;
-    try { data = await response.json(); } catch {}
-    throw new Error(data?.error || friendlyError(null, response.status));
-  }
-
-  const chunks = [];
-  const reader = response.body?.getReader();
-  const contentLength = Number(response.headers.get("Content-Length"));
-  let received = 0;
-  if (reader) {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      received += value.byteLength;
-      if (contentLength > 0) {
-        onProgress(Math.min(92, 20 + Math.round((received / contentLength) * 72)));
-      } else {
-        onProgress(55);
-      }
-    }
-  } else {
-    const blobPart = await response.blob();
-    chunks.push(blobPart);
-  }
-
-  const blob = new Blob(chunks, { type: response.headers.get("Content-Type") || "application/octet-stream" });
-  if (!blob.size) throw new Error("The media source returned an empty file.");
-  onProgress(95);
-
-  const disposition = response.headers.get("Content-Disposition") || "";
-  const utf8Name = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
-  const quotedName = disposition.match(/filename="?([^";]+)"?/i)?.[1];
-  let filename = quotedName || "downly-download";
-  if (utf8Name) {
-    try { filename = decodeURIComponent(utf8Name); } catch {}
-  }
-  const objectUrl = URL.createObjectURL(blob);
+function startBrowserDownload(mediaUrl) {
+  const downloadUrl = "/api/download?url=" + encodeURIComponent(mediaUrl);
   const anchor = document.createElement("a");
-  anchor.href = objectUrl;
-  anchor.download = filename;
+  anchor.href = downloadUrl;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
 }
 
 export default function App() {
@@ -184,12 +140,13 @@ export default function App() {
       const media = Array.isArray(data.media)
         ? data.media.filter((item) => item && typeof item.url === "string" && ["video", "audio", "stream", "embed", "unknown"].includes(item.type))
         : [];
+      setInfo({ title: data.title || safeHostname(data.pageUrl || value), author: safeHostname(data.pageUrl || value), thumbnail: null });
       setDetectedMedia(media);
       const firstDirect = media.find((item) => item.type === "video" || item.type === "audio");
       setSelectedMediaUrl(firstDirect?.url || "");
       setProgress(100);
       setProgressLabel("Ready");
-      setMessage(media.length ? "Detected " + media.length + " public media source(s). Select a direct audio/video file below to download." : "No public direct media file was exposed by this webpage.");
+      setMessage(media.length ? "Found " + media.length + " media source(s) across " + (data.pagesScanned || 1) + " page(s). Direct files can be streamed; playlist/embed sources may require a supported player." : "No public direct media files were found in the pages scanned (" + (data.pagesScanned || 1) + ").");
     } catch (e) {
       setProgress(0);
       setProgressLabel("Ready");
@@ -209,25 +166,25 @@ export default function App() {
       || detectedMedia.find((item) => item.type === "video" || item.type === "audio");
 
     if (!media) {
-      setError("Detect a page with a public direct video or audio file first.");
+      setError("Scan a page and select a direct public video or audio file first.");
       return;
     }
     if (media.type !== "video" && media.type !== "audio") {
-      setError("This source is not a direct video/audio file. HLS/DASH, embeds and protected player streams are not downloaded.");
+      setError("This source is a playlist or embed, not a direct media file. Protected or player-internal streams are not extracted.");
       return;
     }
 
     try {
+      const parsed = new URL(media.url);
+      if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("Only public HTTP(S) media URLs are supported.");
+
       setLoading(true);
-      setProgressLabel("Connecting to the media source...");
-      setProgress(20);
-      await downloadAuthorizedMedia(media.url, (value) => {
-        setProgress(value);
-        setProgressLabel("Downloading original media...");
-      });
+      setProgress(25);
+      setProgressLabel("Starting secure media stream...");
+      startBrowserDownload(media.url);
       setProgress(100);
-      setProgressLabel("Download ready");
-      setMessage("Your original media file was downloaded. No format conversion was applied.");
+      setProgressLabel("Download request sent");
+      setMessage("Your browser has been sent a streamed download. Large files are not buffered inside the app; check your browser downloads.");
       saveHistory({
         url: media.url,
         title: info?.title || "Downloaded media",
@@ -239,7 +196,7 @@ export default function App() {
     } catch (e) {
       setProgress(0);
       setProgressLabel("Download failed");
-      setError(e?.message || "Unable to download this media file.");
+      setError(e?.message || "Unable to start this download.");
     } finally {
       setLoading(false);
     }
@@ -291,7 +248,7 @@ export default function App() {
             <span className="bg-gradient-to-r from-indigo-300 via-violet-300 to-fuchsia-300 bg-clip-text text-transparent">Keep it simple.</span>
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-base leading-7 text-slate-400 sm:text-lg">
-            Paste a webpage or direct media URL to detect public video/audio files and download the original media you are authorized to save.
+            Scan a public website for direct video/audio files, then stream the original file to your device.
           </p>
 
           <div className="glass mx-auto mt-10 max-w-3xl rounded-[28px] p-2 shadow-glow sm:p-3">
@@ -363,12 +320,12 @@ export default function App() {
                 {info?.thumbnail ? <img src={info.thumbnail} alt="" className="h-full w-full rounded-xl object-cover" /> : <div className="flex h-full items-center justify-center rounded-xl border border-white/5"><Play className="fill-white text-white" size={28} /></div>}
               </div>
               <div className="mt-4 line-clamp-2 text-sm font-semibold text-white">{info?.title || "Video preview"}</div>
-              <div className="mt-2 text-xs text-slate-500">{info?.author || "Paste a URL to load video information"}</div>
+              <div className="mt-2 text-xs text-slate-500">{info?.author || "Scan a website or paste a direct media URL"}</div>
             </div>
 
             <div className="glass rounded-3xl p-5 md:col-span-2">
               <div className="flex items-center justify-between">
-                <div><p className="text-sm font-bold">Download settings</p><p className="mt-1 text-xs text-slate-500">Download the original media file.</p></div>
+                <div><p className="text-sm font-bold">Download settings</p><p className="mt-1 text-xs text-slate-500">Stream the original source file without buffering it in app memory.</p></div>
                 <TrendingDown className="text-slate-600" size={20} />
               </div>
               <div className="mt-7 grid gap-4 sm:grid-cols-2">
@@ -426,7 +383,7 @@ export default function App() {
         <section id="how" className="mx-auto max-w-5xl px-5 py-20 sm:px-8">
           <div className="text-center"><p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">How it works</p><h2 className="mt-3 text-3xl font-bold">Three simple steps</h2></div>
           <div className="mt-10 grid gap-4 md:grid-cols-3">
-            {[["01", "Paste your link", "Paste a public webpage or direct media file URL."], ["02", "Choose output", "Choose one of the detected direct media files."], ["03", "Start download", "The download API securely streams the original media file."]].map(([n, t, d]) => <div className="glass rounded-2xl p-6" key={n}><span className="text-sm font-bold text-indigo-300">{n}</span><h3 className="mt-8 font-bold">{t}</h3><p className="mt-2 text-sm leading-6 text-slate-500">{d}</p></div>)}
+            {[["01", "Paste your link", "Paste a public webpage or direct media file URL."], ["02", "Scan pages", "Downly scans up to six linked HTML pages on the same website."], ["03", "Stream download", "The browser receives the original file directly from the download API."]].map(([n, t, d]) => <div className="glass rounded-2xl p-6" key={n}><span className="text-sm font-bold text-indigo-300">{n}</span><h3 className="mt-8 font-bold">{t}</h3><p className="mt-2 text-sm leading-6 text-slate-500">{d}</p></div>)}
           </div>
         </section>
 

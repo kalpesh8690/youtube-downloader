@@ -1,11 +1,23 @@
 import { requestPublicUrl } from "../lib/public-https.js";
 
 function fail(res, status, code, message) {
+  res.setHeader("Cache-Control", "no-store");
   return res.status(status).json({ ok: false, error: message, code });
 }
 
 const DEFAULT_MAX_BYTES = 500 * 1024 * 1024;
-const MEDIA_EXTENSIONS = /\.(mp4|webm|mov|m4v|mkv|avi|mp3|m4a|aac|wav|ogg|opus|flac)$/i;
+const MEDIA_EXTENSIONS = /\.(mp4|m4v|m4p|mkv|webm|mov|avi|mpg|mpeg|mpe|m1v|m2v|vob|ts|mts|m2ts|3gp|3g2|flv|f4v|wmv|asf|ogv|ogg|rm|rmvb|divx|mxf|mp3|m4a|m4b|aac|wav|wave|opus|flac|aiff|aif|ape|wma|amr|mid|midi)$/i;
+const MEDIA_MIME_PREFIXES = ["video/", "audio/"];
+const MEDIA_MIME_TYPES = new Set([
+  "application/mp4",
+  "application/x-matroska",
+  "application/ogg",
+  "application/vnd.rn-realmedia",
+  "application/x-shockwave-flash",
+  "application/octet-stream",
+  "binary/octet-stream",
+  "application/x-download"
+]);
 
 function safeFilename(value) {
   const clean = String(value || "")
@@ -17,26 +29,61 @@ function safeFilename(value) {
   return clean || "downly-download.bin";
 }
 
-function getBody(req) {
-  if (typeof req.body === "string") {
-    try { return JSON.parse(req.body); }
+function getInput(req) {
+  if (req.method === "GET") {
+    return {
+      url: typeof req.query?.url === "string" ? req.query.url : "",
+      filename: typeof req.query?.filename === "string" ? req.query.filename : ""
+    };
+  }
+  let body = req.body;
+  if (typeof body === "string") {
+    try { body = JSON.parse(body); }
     catch { return null; }
   }
-  return req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : null;
+  return body && typeof body === "object" && !Array.isArray(body) ? body : null;
+}
+
+function isValidHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:")
+      && !url.username && !url.password && value.length <= 4096;
+  } catch {
+    return false;
+  }
+}
+
+function isSupportedMedia(contentType, pathname) {
+  const mime = String(contentType || "").split(";")[0].trim().toLowerCase();
+  if (MEDIA_MIME_PREFIXES.some((prefix) => mime.startsWith(prefix))) return true;
+  if (!MEDIA_MIME_TYPES.has(mime)) return false;
+  return MEDIA_EXTENSIONS.test(pathname);
+}
+
+function parseUpstreamFilename(disposition) {
+  const header = String(disposition || "");
+  const star = header.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)?.[1];
+  if (star) {
+    try { return decodeURIComponent(star.replace(/^"|"$/g, "")); } catch {}
+  }
+  const quoted = header.match(/filename\s*=\s*"([^"]+)"/i)?.[1];
+  if (quoted) return quoted;
+  return header.match(/filename\s*=\s*([^;]+)/i)?.[1]?.trim() || "";
 }
 
 export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(204).end();
-  if (req.method !== "POST") {
-    res.setHeader("Allow", "POST, OPTIONS");
-    return fail(res, 405, "METHOD_NOT_ALLOWED", "Use POST to download a direct media URL.");
+  if (req.method !== "POST" && req.method !== "GET") {
+    res.setHeader("Allow", "GET, POST, OPTIONS");
+    return fail(res, 405, "METHOD_NOT_ALLOWED", "Use GET or POST with a direct public media URL.");
   }
 
-  const body = getBody(req);
+  const body = getInput(req);
   if (!body) return fail(res, 400, "INVALID_BODY", "A JSON object containing the media URL is required.");
   const rawUrl = body.url;
-  if (typeof rawUrl !== "string" || rawUrl.length > 4096) {
-    return fail(res, 400, "INVALID_URL", "A valid direct media URL is required.");
+  if (typeof rawUrl !== "string" || !isValidHttpUrl(rawUrl)) {
+    return fail(res, 400, "INVALID_URL", "A valid public HTTP or HTTPS media URL is required.");
   }
 
   const configuredLimit = Number(process.env.DOWNLOAD_MAX_BYTES);
@@ -46,30 +93,34 @@ export default async function handler(req, res) {
 
   let upstream;
   try {
+    const range = typeof req.headers?.range === "string" && /^bytes=\d*-\d*(?:,\d*-\d*)*$/.test(req.headers.range)
+      ? req.headers.range
+      : null;
+
     const result = await requestPublicUrl(rawUrl, {
-      httpsOnly: true,
-      timeoutMs: 30000,
+      timeoutMs: 60000,
       maxRedirects: 4,
-      accept: "video/*,audio/*,application/octet-stream,*/*;q=0.5"
+      accept: "video/*,audio/*,application/octet-stream,application/mp4,application/x-matroska,*/*;q=0.4",
+      headers: range ? { Range: range } : {}
     });
     upstream = result.response;
 
     if (upstream.statusCode !== 200 && upstream.statusCode !== 206) {
       const status = upstream.statusCode || 502;
+      const contentRange = upstream.headers["content-range"];
       upstream.resume();
-      return fail(res, status === 404 ? 404 : 502, "MEDIA_UNAVAILABLE", "The media host returned HTTP " + status + ".");
+      if (status === 416 && contentRange) res.setHeader("Content-Range", contentRange);
+      return fail(res, status === 404 ? 404 : (status === 416 ? 416 : 502), "MEDIA_UNAVAILABLE", "The media host returned HTTP " + status + ".");
     }
 
     const contentType = String(upstream.headers["content-type"] || "application/octet-stream").split(";")[0].trim().toLowerCase();
-    const finalPath = new URL(result.url).pathname;
-    const hasMediaExtension = MEDIA_EXTENSIONS.test(finalPath);
-    const mediaType = contentType.startsWith("video/") || contentType.startsWith("audio/")
-      || contentType === "application/octet-stream" || contentType === "application/mp4"
-      || contentType === "application/x-matroska";
+    let finalUrl;
+    try { finalUrl = new URL(result.url); }
+    catch { upstream.destroy(); return fail(res, 502, "INVALID_UPSTREAM_URL", "The media host returned an invalid final URL."); }
 
-    if (!mediaType || (contentType === "application/octet-stream" && !hasMediaExtension)) {
+    if (!isSupportedMedia(contentType, finalUrl.pathname)) {
       upstream.destroy();
-      return fail(res, 415, "NOT_DIRECT_MEDIA", "The URL did not return a supported direct video or audio file.");
+      return fail(res, 415, "NOT_DIRECT_MEDIA", "This URL did not return a supported direct video/audio file. Webpages and HLS/DASH playlists must be scanned first.");
     }
 
     const contentLength = Number(upstream.headers["content-length"]);
@@ -78,19 +129,19 @@ export default async function handler(req, res) {
       return fail(res, 413, "FILE_TOO_LARGE", "This file exceeds the configured download size limit.");
     }
 
-    let filename = safeFilename(body.filename);
-    if (!body.filename) {
-      const encoded = finalPath.split("/").filter(Boolean).pop() || "downly-download.bin";
-      try { filename = safeFilename(decodeURIComponent(encoded)); }
-      catch { filename = safeFilename(encoded); }
-    }
+    const upstreamName = parseUpstreamFilename(upstream.headers["content-disposition"]);
+    const pathName = finalUrl.pathname.split("/").filter(Boolean).pop() || "downly-download";
+    const filename = safeFilename(body.filename || upstreamName || pathName);
     const asciiFilename = filename.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "_");
 
-    res.statusCode = 200;
+    res.statusCode = upstream.statusCode === 206 ? 206 : 200;
     res.setHeader("Content-Type", contentType);
     res.setHeader("Content-Disposition", 'attachment; filename="' + asciiFilename + '"; filename*=UTF-8\'\'' + encodeURIComponent(filename));
     res.setHeader("Cache-Control", "private, no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Downly-Source-Type", contentType);
+    res.setHeader("Accept-Ranges", upstream.headers["accept-ranges"] || "bytes");
+    if (upstream.headers["content-range"]) res.setHeader("Content-Range", upstream.headers["content-range"]);
     if (Number.isFinite(contentLength) && contentLength >= 0) res.setHeader("Content-Length", String(contentLength));
 
     let transferred = 0;
@@ -101,18 +152,19 @@ export default async function handler(req, res) {
         if (!res.destroyed) res.destroy();
       }
     });
-    upstream.on("error", () => {
+    upstream.once("error", () => {
       if (!res.destroyed) res.destroy();
     });
-    res.on("close", () => {
+    res.once("close", () => {
       if (!upstream.destroyed) upstream.destroy();
     });
+
+    // Stream directly to the browser. Do not buffer the entire media file in memory.
     upstream.pipe(res);
   } catch (error) {
     if (upstream && !upstream.destroyed) upstream.destroy();
     if (!res.headersSent) {
-      const message = error?.message || "Unable to reach the direct media host.";
-      return fail(res, 400, "DOWNLOAD_FAILED", message);
+      return fail(res, 502, "DOWNLOAD_FAILED", error?.message || "Unable to reach the direct media host.");
     }
     res.destroy();
   }
