@@ -80,7 +80,13 @@ async function serveJobFile(req,res,id){
 async function staticFile(req,res){const pathname=new URL(req.url,"http://localhost").pathname;if(pathname==="/health")return json(res,200,{ok:true,service:"downly-termux",port:PORT,worker:WORKER_URL,resumable:true});if(pathname.startsWith("/api/"))return json(res,404,{ok:false,error:"API route not found on Termux server"});const clean=pathname.replace(/^\/+/, "");const file=clean&&!clean.includes("..")?new URL(clean,DIST):new URL("index.html",DIST);try{const st=await fs.stat(file);if(!st.isFile())throw 0;const ext=file.pathname.match(/\.[^.]+$/)?.[0].toLowerCase()||"";res.writeHead(200,{"Content-Type":mime[ext]||"application/octet-stream","Cache-Control":ext===".html"?"no-cache":"public, max-age=31536000, immutable"});createReadStream(file).pipe(res);}catch{try{const index=await fs.readFile(new URL("index.html",DIST));res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-cache"});res.end(index);}catch{json(res,500,{ok:false,error:"Run npm run build first"});}}}
 const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,"http://localhost");if(req.method==="OPTIONS")return res.writeHead(204).end();
 if(u.pathname==="/api/ytdlp/jobs"&&req.method==="POST"){let raw="";for await(const c of req)raw+=c;if(raw.length>32768)return json(res,413,{ok:false,error:"Request too large"});let body;try{body=JSON.parse(raw)}catch{return json(res,400,{ok:false,error:"Invalid JSON body"})}if(!body?.url)return json(res,400,{ok:false,error:"url is required"});const job=await startJob({url:body.url,format:body.format||"best",audio_only:Boolean(body.audio_only)});return json(res,202,{ok:true,...job});}
-const statusMatch=u.pathname.match(/^\/api\/ytdlp\/jobs\/([a-f0-9]+)$/);if(statusMatch&&req.method==="GET"){const meta=enrichMeta(await readMeta(statusMatch[1]));return meta?json(res,200,{ok:true,...meta}):json(res,404,{ok:false,error:"Download job not found"});}
+const statusMatch=u.pathname.match(/^\/api\/ytdlp\/jobs\/([a-f0-9]+)$/);
+if(statusMatch&&req.method==="DELETE"){
+  const dir=path.join(STORE,statusMatch[1]);
+  await fs.rm(dir,{recursive:true,force:true});
+  return json(res,200,{ok:true,id:statusMatch[1],cancelled:true});
+}
+if(statusMatch&&req.method==="GET"){const meta=enrichMeta(await readMeta(statusMatch[1]));return meta?json(res,200,{ok:true,...meta}):json(res,404,{ok:false,error:"Download job not found"});}
 const fileMatch=u.pathname.match(/^\/api\/ytdlp\/jobs\/([a-f0-9]+)\/file$/);if(fileMatch&&(req.method==="GET"||req.method==="HEAD")){
   const meta=enrichMeta(await readMeta(fileMatch[1]));
   if(!meta)return json(res,404,{ok:false,error:"Download job not found"});
