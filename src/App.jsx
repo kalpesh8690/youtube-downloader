@@ -266,8 +266,14 @@ export default function App() {
   };
 
   const clearWorkspace = () => {
+    inspectAbortRef.current?.abort();
+    const jobId = activeJobRef.current?.jobId;
+    if (jobId) fetch("/api/ytdlp/jobs/" + jobId + "/cancel", { method: "POST" }).catch(() => {});
+    activeJobRef.current = null;
+    downloadSessionRef.current = null;
     setUrl("");
     setInfo(null);
+    setAvailableFormats([]);
     setDetectedMedia([]);
     setSelectedMediaUrl("");
     setDownloadMeta(null);
@@ -276,6 +282,9 @@ export default function App() {
     setProgress(0);
     setProgressLabel("Ready");
     setTransferState("idle");
+    setInspectState("idle");
+    setDownloadSpeed(0);
+    setDownloadEta(0);
   };
 
   const formatEta = (seconds) => {
