@@ -11,10 +11,45 @@ const WORKER_TOKEN=process.env.YTDLP_WORKER_TOKEN||"";
 const DIST=new URL("../dist/",import.meta.url);
 const STORE=path.resolve(process.env.DOWNLOAD_STORE||path.join(process.env.HOME||".",".downly-downloads"));
 const mime={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".json":"application/json; charset=utf-8",".svg":"image/svg+xml",".png":"image/png",".jpg":"image/jpeg",".jpeg":"image/jpeg",".webp":"image/webp",".ico":"image/x-icon"};
+const securityHeaders = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; media-src 'self' blob: https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+};
+const rateBuckets = new Map();
+function rateAllowed(req, scope, limit=30, windowMs=60000) {
+  const ip = String(req.headers["cf-connecting-ip"] || req.socket.remoteAddress || "unknown").slice(0, 80);
+  const key = scope + ":" + ip;
+  const now = Date.now();
+  const bucket = rateBuckets.get(key);
+  if (!bucket || now - bucket.start >= windowMs) {
+    rateBuckets.set(key, {start: now, count: 1});
+    if (rateBuckets.size > 5000) {
+      for (const [k,v] of rateBuckets) if (now-v.start > windowMs*2) rateBuckets.delete(k);
+    }
+    return true;
+  }
+  if (bucket.count >= limit) return false;
+  bucket.count += 1;
+  return true;
+}
+async function readJsonBody(req, maxBytes=32768) {
+  let raw="";
+  for await(const chunk of req) {
+    raw += chunk;
+    if (raw.length > maxBytes) throw Object.assign(new Error("Request body is too large"), {statusCode:413});
+  }
+  try { return JSON.parse(raw || "{}"); }
+  catch { throw Object.assign(new Error("Invalid JSON body"), {statusCode:400}); }
+}
+
 
 await fs.mkdir(STORE,{recursive:true});
 
-function json(res,status,body){const data=JSON.stringify(body);res.writeHead(status,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"});res.end(data);}
+function json(res,status,body){if(res.headersSent){res.destroy();return;}const data=JSON.stringify(body);res.writeHead(status,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store",...securityHeaders});res.end(data);}
 function youtubeId(input){try{const u=new URL(String(input||""));const h=u.hostname.toLowerCase();if(!["youtube.com","www.youtube.com","m.youtube.com","youtu.be","www.youtu.be"].includes(h))return null;if(h.includes("youtu.be"))return u.pathname.split("/").filter(Boolean)[0]||null;if(u.pathname==="/watch")return u.searchParams.get("v");return u.pathname.match(/^\/(shorts|embed|live)\/([^/?#]+)/)?.[2]||null;}catch{return null;}}
 async function youtubeInfo(url){const id=youtubeId(url);if(!id)return{status:400,body:{ok:false,error:"Valid YouTube URL required",code:"INVALID_URL"}};const canonical="https://www.youtube.com/watch?v="+encodeURIComponent(id);const r=await fetch("https://www.youtube.com/oembed?url="+encodeURIComponent(canonical)+"&format=json");if(r.status===404)return{status:404,body:{ok:false,error:"Video information unavailable",code:"VIDEO_NOT_FOUND",id}};if(!r.ok)return{status:502,body:{ok:false,error:"YouTube metadata service returned an error",code:"UPSTREAM_ERROR",id}};const d=await r.json();return{status:200,body:{ok:true,id,title:d.title,author:d.author_name,thumbnail:"https://i.ytimg.com/vi/"+id+"/hqdefault.jpg",watchUrl:canonical,formats:[{format:"MP4",quality:"Best available",available:true},{format:"MP3",quality:"Audio",available:true}],note:"Downloads are handled by your local Termux yt-dlp worker."}};}
 
@@ -67,45 +102,49 @@ async function serveJobFile(req,res,id){
   res.writeHead(206,{...common,"Content-Length":String(end-start+1),"Content-Range":`bytes ${start}-${end}/${total}`});
   return createReadStream(file,{start,end}).pipe(res);
 }
-async function staticFile(req,res){const pathname=new URL(req.url,"http://localhost").pathname;if(pathname==="/health")return json(res,200,{ok:true,service:"downly-termux",port:PORT,worker:WORKER_URL,resumable:true});if(pathname.startsWith("/api/"))return json(res,404,{ok:false,error:"API route not found on Termux server"});const clean=pathname.replace(/^\/+/, "");const file=clean&&!clean.includes("..")?new URL(clean,DIST):new URL("index.html",DIST);try{const st=await fs.stat(file);if(!st.isFile())throw 0;const ext=file.pathname.match(/\.[^.]+$/)?.[0].toLowerCase()||"";res.writeHead(200,{"Content-Type":mime[ext]||"application/octet-stream","Cache-Control":ext===".html"?"no-cache":"public, max-age=31536000, immutable"});createReadStream(file).pipe(res);}catch{try{const index=await fs.readFile(new URL("index.html",DIST));res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-cache"});res.end(index);}catch{json(res,500,{ok:false,error:"Run npm run build first"});}}}
+async function staticFile(req,res){const pathname=new URL(req.url,"http://localhost").pathname;if(pathname==="/health")return json(res,200,{ok:true,service:"downly-termux",port:PORT,worker:WORKER_URL,resumable:true});if(pathname.startsWith("/api/"))return json(res,404,{ok:false,error:"API route not found on Termux server"});const clean=pathname.replace(/^\/+/, "");const file=clean&&!clean.includes("..")?new URL(clean,DIST):new URL("index.html",DIST);try{const st=await fs.stat(file);if(!st.isFile())throw 0;const ext=file.pathname.match(/\.[^.]+$/)?.[0].toLowerCase()||"";res.writeHead(200,{"Content-Type":mime[ext]||"application/octet-stream","Cache-Control":ext===".html"?"no-cache":"public, max-age=31536000, immutable",...securityHeaders});createReadStream(file).pipe(res);}catch{try{const index=await fs.readFile(new URL("index.html",DIST));res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-cache",...securityHeaders});res.end(index);}catch{json(res,500,{ok:false,error:"Run npm run build first"});}}}
 const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,"http://localhost");if(req.method==="OPTIONS")return res.writeHead(204).end();
 if(u.pathname==="/api/media/crawl"&&req.method==="GET"){
   const pageUrl=u.searchParams.get("url");
   if(!pageUrl)return json(res,400,{ok:false,error:"url is required"});
+  if(!rateAllowed(req,"crawl",15))return json(res,429,{ok:false,error:"Too many page scans. Please wait and retry.",code:"RATE_LIMITED"});
   try{
     const upstream=await workerFetch("/v1/crawl?"+new URLSearchParams({url:pageUrl}).toString(),{method:"GET"});
     const data=await upstream.json().catch(()=>null);
     return json(res,upstream.status,data||{ok:false,error:"Crawler returned an invalid response"});
   }catch(e){
-    console.error("[media-crawl] url="+pageUrl+" error="+(e?.stack||e));
+    console.error("[media-crawl] error="+(e?.stack||e));
     return json(res,502,{ok:false,error:"Media crawler unavailable",code:"MEDIA_CRAWL_ERROR"});
   }
 }
 if(u.pathname==="/api/media/info"&&req.method==="POST"){
-  let raw="";for await(const c of req)raw+=c;
-  let body;try{body=JSON.parse(raw)}catch{return json(res,400,{ok:false,error:"Invalid JSON body"})}
+  if(!rateAllowed(req,"inspect",20))return json(res,429,{ok:false,error:"Too many inspections. Please wait and retry.",code:"RATE_LIMITED"});
+  let body;try{body=await readJsonBody(req,8192);}catch(e){return json(res,e.statusCode||400,{ok:false,error:e.message});}
   if(!body?.url)return json(res,400,{ok:false,error:"url is required"});
   try{
     const data=await inspectMedia(String(body.url).trim());
     return json(res,200,data);
   }catch(e){
-    console.error("[media-info] url="+body.url+" error="+(e?.stack||e));
+    console.error("[media-info] error="+(e?.stack||e));
     return json(res,422,{ok:false,error:e?.message||"Unable to inspect media URL",code:"MEDIA_INSPECT_ERROR"});
   }
 }
 if(u.pathname==="/api/ytdlp/stream"&&req.method==="GET"){
   const mediaUrl=u.searchParams.get("url");
   if(!mediaUrl)return json(res,400,{ok:false,error:"url is required"});
+  if(!rateAllowed(req,"stream",8))return json(res,429,{ok:false,error:"Download start limit reached. Please wait and retry.",code:"RATE_LIMITED"});
   try{
-    const params=new URLSearchParams({
+    const values={
       url:mediaUrl,
+      direct_url:u.searchParams.get("direct_url")||"",
+      referer:u.searchParams.get("referer")||mediaUrl,
       format:u.searchParams.get("format")||"best",
       audio_only:u.searchParams.get("audio_only")==="true"?"true":"false",
       filename:u.searchParams.get("filename")||""
-    });
-    const upstream=await workerFetch("/v1/stream?"+params.toString(),{method:"GET"});
-    const headers={};
-    for(const name of ["content-type","content-disposition","cache-control","accept-ranges","x-content-type-options","content-length"]){
+    };
+    const upstream=await workerFetch("/v1/stream?"+new URLSearchParams(values).toString(),{method:"GET"});
+    const headers={...securityHeaders};
+    for(const name of ["content-type","content-disposition","cache-control","accept-ranges","content-length","content-range"]){
       const value=upstream.headers.get(name);if(value)headers[name]=value;
     }
     res.writeHead(upstream.status,headers);
@@ -113,12 +152,12 @@ if(u.pathname==="/api/ytdlp/stream"&&req.method==="GET"){
     for await(const chunk of upstream.body)res.write(Buffer.from(chunk));
     return res.end();
   }catch(e){
-    console.error("[stream-proxy] url="+mediaUrl+" error="+(e?.stack||e));
+    console.error("[stream-proxy] error="+(e?.stack||e));
     if(!res.headersSent)return json(res,502,{ok:false,error:"Direct download stream unavailable",code:"STREAM_PROXY_ERROR"});
     res.destroy();
   }
 }
-if(u.pathname==="/api/ytdlp/jobs"&&req.method==="POST"){let raw="";for await(const c of req)raw+=c;if(raw.length>32768)return json(res,413,{ok:false,error:"Request too large"});let body;try{body=JSON.parse(raw)}catch{return json(res,400,{ok:false,error:"Invalid JSON body"})}if(!body?.url)return json(res,400,{ok:false,error:"url is required"});const job=await startJob({url:body.url,format:body.format||"best",audio_only:Boolean(body.audio_only)});return json(res,202,{ok:true,...job});}
+if(u.pathname==="/api/ytdlp/jobs"&&req.method==="POST"){if(!rateAllowed(req,"jobs",8))return json(res,429,{ok:false,error:"Too many download jobs. Please wait and retry.",code:"RATE_LIMITED"});let body;try{body=await readJsonBody(req,8192);}catch(e){return json(res,e.statusCode||400,{ok:false,error:e.message});}if(!body?.url)return json(res,400,{ok:false,error:"url is required"});const job=await startJob({url:body.url,format:body.format||"best",audio_only:Boolean(body.audio_only)});return json(res,202,{ok:true,...job});}
 const statusMatch=u.pathname.match(/^\/api\/ytdlp\/jobs\/([a-f0-9]+)(?:\/(pause|resume|cancel))?$/);
 if(statusMatch && req.method==="POST" && statusMatch[2]){
   const action=statusMatch[2];
