@@ -69,6 +69,18 @@ async function serveJobFile(req,res,id){
 }
 async function staticFile(req,res){const pathname=new URL(req.url,"http://localhost").pathname;if(pathname==="/health")return json(res,200,{ok:true,service:"downly-termux",port:PORT,worker:WORKER_URL,resumable:true});if(pathname.startsWith("/api/"))return json(res,404,{ok:false,error:"API route not found on Termux server"});const clean=pathname.replace(/^\/+/, "");const file=clean&&!clean.includes("..")?new URL(clean,DIST):new URL("index.html",DIST);try{const st=await fs.stat(file);if(!st.isFile())throw 0;const ext=file.pathname.match(/\.[^.]+$/)?.[0].toLowerCase()||"";res.writeHead(200,{"Content-Type":mime[ext]||"application/octet-stream","Cache-Control":ext===".html"?"no-cache":"public, max-age=31536000, immutable"});createReadStream(file).pipe(res);}catch{try{const index=await fs.readFile(new URL("index.html",DIST));res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-cache"});res.end(index);}catch{json(res,500,{ok:false,error:"Run npm run build first"});}}}
 const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,"http://localhost");if(req.method==="OPTIONS")return res.writeHead(204).end();
+if(u.pathname==="/api/media/crawl"&&req.method==="GET"){
+  const pageUrl=u.searchParams.get("url");
+  if(!pageUrl)return json(res,400,{ok:false,error:"url is required"});
+  try{
+    const upstream=await workerFetch("/v1/crawl?"+new URLSearchParams({url:pageUrl}).toString(),{method:"GET"});
+    const data=await upstream.json().catch(()=>null);
+    return json(res,upstream.status,data||{ok:false,error:"Crawler returned an invalid response"});
+  }catch(e){
+    console.error("[media-crawl] url="+pageUrl+" error="+(e?.stack||e));
+    return json(res,502,{ok:false,error:"Media crawler unavailable",code:"MEDIA_CRAWL_ERROR"});
+  }
+}
 if(u.pathname==="/api/media/info"&&req.method==="POST"){
   let raw="";for await(const c of req)raw+=c;
   let body;try{body=JSON.parse(raw)}catch{return json(res,400,{ok:false,error:"Invalid JSON body"})}
