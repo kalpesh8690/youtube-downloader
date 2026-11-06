@@ -17,7 +17,7 @@ const features = [
 function isYouTube(value) {
   try {
     const u = new URL(value);
-    return /(^|\\.)((youtube\\.com)|(youtu\\.be))$/.test(u.hostname);
+    return /(^|\.)((youtube\.com)|(youtu\.be))$/.test(u.hostname.toLowerCase());
   } catch {
     return false;
   }
