@@ -66,19 +66,23 @@ const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,"htt
 if(u.pathname==="/api/ytdlp/jobs"&&req.method==="POST"){let raw="";for await(const c of req)raw+=c;if(raw.length>32768)return json(res,413,{ok:false,error:"Request too large"});let body;try{body=JSON.parse(raw)}catch{return json(res,400,{ok:false,error:"Invalid JSON body"})}if(!body?.url)return json(res,400,{ok:false,error:"url is required"});const job=await startJob({url:body.url,format:body.format||"best",audio_only:Boolean(body.audio_only)});return json(res,202,{ok:true,...job});}
 const statusMatch=u.pathname.match(/^\/api\/ytdlp\/jobs\/([a-f0-9]+)(?:\/(pause|resume|cancel))?$/);
 if(statusMatch && req.method==="POST" && statusMatch[2]){
-  const upstream=await workerFetch("/v1/jobs/"+statusMatch[1]+"/"+statusMatch[2],{method:"POST"});
+  const action=statusMatch[2];
+  const upstream=await workerFetch("/v1/jobs/"+statusMatch[1]+"/"+action,{method:"POST"});
   const data=await upstream.json().catch(()=>null);
-  return json(res,upstream.status,data||{ok:upstream.ok});
+  if(!upstream.ok) return json(res,upstream.status,{ok:false,error:data?.error||("Worker "+action+" request failed"),code:"WORKER_ACTION_ERROR"});
+  return json(res,upstream.status,{ok:true,...(data||{})});
 }
 if(statusMatch&&req.method==="DELETE"){
   const upstream=await workerFetch("/v1/jobs/"+statusMatch[1]+"/cancel",{method:"POST"});
   const data=await upstream.json().catch(()=>null);
-  return json(res,upstream.status,data||{ok:upstream.ok});
+  if(!upstream.ok) return json(res,upstream.status,{ok:false,error:data?.error||"Worker cancel request failed",code:"WORKER_ACTION_ERROR"});
+  return json(res,upstream.status,{ok:true,...(data||{})});
 }
 if(statusMatch&&req.method==="GET"){
   const upstream=await workerFetch("/v1/jobs/"+statusMatch[1]);
   const data=await upstream.json().catch(()=>null);
-  return json(res,upstream.status,data||{ok:upstream.ok});
+  if(!upstream.ok) return json(res,upstream.status,{ok:false,error:data?.error||"Could not read worker status",code:"WORKER_STATUS_ERROR"});
+  return json(res,upstream.status,{ok:true,...(data||{})});
 }
 const fileMatch=u.pathname.match(/^\/api\/ytdlp\/jobs\/([a-f0-9]+)\/file$/);if(fileMatch&&(req.method==="GET"||req.method==="HEAD")){
   const jobId=fileMatch[1];
