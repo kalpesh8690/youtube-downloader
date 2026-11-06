@@ -90,6 +90,12 @@ export default function App() {
   const [transferState, setTransferState] = useState("idle");
   const [workerStatus, setWorkerStatus] = useState("checking");
   const [copied, setCopied] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [downloadBytes, setDownloadBytes] = useState(0);
+  const [downloadTotal, setDownloadTotal] = useState(0);
+  const [downloadSpeed, setDownloadSpeed] = useState(0);
+  const [downloadEta, setDownloadEta] = useState(null);
+  const downloadAbortRef = useRef(null);
 
   useEffect(() => {
     try {
@@ -284,22 +290,58 @@ export default function App() {
     else handleDownload();
   };
 
-  const submitNativeDownload = (values) => {
-    const form = document.createElement("form");
-    form.method = "POST";
-    form.action = "/api/ytdlp/stream";
-    form.enctype = "application/x-www-form-urlencoded";
-    form.style.display = "none";
-    for (const [name, value] of Object.entries(values)) {
-      const field = document.createElement("input");
-      field.type = "hidden";
-      field.name = name;
-      field.value = String(value ?? "");
-      form.appendChild(field);
+  const formatEta = (seconds) => {
+    if (!Number.isFinite(seconds) || seconds < 0) return "—";
+    if (seconds < 60) return Math.ceil(seconds) + "s";
+    const minutes = Math.floor(seconds / 60);
+    return minutes + "m " + String(Math.ceil(seconds % 60)).padStart(2, "0") + "s";
+  };
+
+  const downloadInPage = async (values) => {
+    downloadAbortRef.current?.abort();
+    const controller = new AbortController();
+    downloadAbortRef.current = controller;
+    const response = await fetch("/api/ytdlp/stream?" + new URLSearchParams(values), { cache: "no-store", signal: controller.signal });
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      throw new Error(data?.error || "Download stream could not be started.");
     }
-    document.body.appendChild(form);
-    form.submit();
-    form.remove();
+    if (!response.body) throw new Error("Streaming is not supported by this browser.");
+
+    const total = Number(response.headers.get("content-length") || 0);
+    const disposition = response.headers.get("content-disposition") || "";
+    const match = disposition.match(/filename="([^"]+)"/i);
+    const filename = match?.[1] || values.filename || "downly-download.bin";
+    setDownloadTotal(total); setDownloadBytes(0); setDownloadProgress(0); setDownloadSpeed(0); setDownloadEta(null);
+
+    const reader = response.body.getReader();
+    const chunks = [];
+    let received = 0, lastBytes = 0, lastTime = performance.now();
+    const started = lastTime;
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      chunks.push(value);
+      const now = performance.now();
+      const dt = Math.max((now - lastTime) / 1000, 0.001);
+      const speed = (received - lastBytes) / dt;
+      setDownloadBytes(received);
+      setDownloadProgress(total ? Math.min(100, received / total * 100) : 0);
+      setDownloadSpeed(speed);
+      setDownloadEta(total && speed > 0 ? (total - received) / speed : null);
+      setProgressLabel(total ? "Downloading · " + Math.round(received / total * 100) + "%" : "Downloading · " + formatBytes(received));
+      lastBytes = received; lastTime = now;
+    }
+    const blob = new Blob(chunks, {type: response.headers.get("content-type") || "application/octet-stream"});
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+    setDownloadBytes(received); setDownloadTotal(total || received); setDownloadProgress(100); setDownloadSpeed(0); setDownloadEta(0);
+    setTransferState("complete"); setProgressLabel("Download complete");
+    setMessage("Download complete — transferred directly inside Downly.");
+    downloadAbortRef.current = null;
   };
 
   const pasteFromClipboard = async () => {
@@ -353,7 +395,8 @@ export default function App() {
       setError("");
 
       setTransferState("downloading");
-      setProgressLabel("Starting Chrome download...");
+      setDownloadProgress(0); setDownloadBytes(0); setDownloadTotal(0); setDownloadSpeed(0); setDownloadEta(null);
+      setProgressLabel("Preparing download…");
 
       if (availableFormats.length) {
         const audioOnly = format === "MP3";
@@ -371,23 +414,7 @@ export default function App() {
         const outputExt = audioOnly ? "mp3" : (directUrl && /^[a-z0-9]{2,5}$/.test(selectedExt) ? selectedExt : "mp4");
         const filename = title + "." + outputExt;
 
-        submitNativeDownload({
-          url: url.trim(),
-          direct_url: directUrl || "",
-          referer: info?.webpageUrl || url.trim(),
-          format: selector,
-          audio_only: audioOnly ? "true" : "false",
-          filename
-        });
-
-        setTransferState("browser");
-
-        setProgressLabel("Chrome Downloads · download requested");
-        setMessage(directUrl
-          ? "Direct source sent to Chrome Downloads. This page does not buffer the file."
-          : audioOnly
-            ? "MP3 conversion stream sent to Chrome Downloads. The file is converted while it streams."
-            : "Media stream sent to Chrome Downloads. The worker streams the result without saving a completed copy first.");
+        await downloadInPage({url:url.trim(),direct_url:directUrl||"",referer:info?.webpageUrl||url.trim(),format:selector,audio_only:audioOnly?"true":"false",filename});
         saveHistory({
           url: url.trim(),
           title: info?.title || "Media download",
@@ -410,20 +437,7 @@ export default function App() {
         const isDirect = /\.(?:mp4|webm|m4v|mov|mkv|mp3|m4a|aac|wav|ogg|flac)(?:$|\?)/i.test(media.url);
         const outputExt = needsMp3Conversion ? "mp3" : (media.type === "stream" ? "mp4" : (ext || (media.type === "audio" ? "mp3" : "mp4")));
         const filename = ((info?.title || "downly-download").replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 140) || "downly-download") + "." + outputExt;
-        submitNativeDownload({
-          url: isDirect && !needsMp3Conversion ? url.trim() : media.url,
-          direct_url: isDirect && !needsMp3Conversion ? media.url : "",
-          referer: url.trim(),
-          format: "best",
-          audio_only: needsMp3Conversion ? "true" : "false",
-          filename
-        });
-        setTransferState("browser");
-
-        setProgressLabel("Chrome Downloads · download requested");
-        setMessage(isDirect
-          ? "Direct media sent to Chrome Downloads. Downly does not buffer the file."
-          : "Media stream sent to Chrome Downloads.");
+        await downloadInPage({url:isDirect&&!needsMp3Conversion?url.trim():media.url,direct_url:isDirect&&!needsMp3Conversion?media.url:"",referer:url.trim(),format:"best",audio_only:needsMp3Conversion?"true":"false",filename});
         setLoading(false);
         return;
       }
@@ -486,11 +500,11 @@ export default function App() {
                 <span className="bg-gradient-to-r from-indigo-300 via-violet-300 to-fuchsia-300 bg-clip-text text-transparent">Your download control.</span>
               </h1>
               <p className="mt-5 max-w-xl text-sm leading-7 text-slate-400 sm:text-base">
-                Paste a public media URL to inspect its metadata and formats, then send the file straight to Chrome Downloads.
+                Paste a public media URL to inspect its metadata and formats, then download with live in-page progress.
               </p>
               <div className="mt-7 flex flex-wrap gap-2 text-[11px] text-slate-500">
                 <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5" aria-live="polite"><span className={workerStatus==="online" ? "mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" : "mr-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400"}/>{workerStatus==="online" ? "Worker online" : workerStatus==="checking" ? "Checking worker" : "Worker offline"}</span>
-                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5"><Download className="mr-1 inline" size={12}/> Native Chrome downloads</span>
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5"><Download className="mr-1 inline" size={12}/> In-page downloads</span>
                 <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5"><RefreshCw className="mr-1 inline" size={12}/> Media crawler</span>
               </div>
             </div>
@@ -535,6 +549,17 @@ export default function App() {
                     <p className="mt-2 text-[11px] text-slate-500">Preparing metadata and available formats. Your browser download starts only after you press Download.</p>
                   </div>
                 )}
+                {(transferState === "downloading" || transferState === "complete") && (
+                  <div className="mt-4 rounded-2xl border border-indigo-400/15 bg-indigo-500/5 p-4" role="status" aria-live="polite">
+                    <div className="flex items-center justify-between">
+                      <div><p className="text-xs font-bold text-white">{progressLabel}</p><p className="mt-1 text-[11px] text-slate-500">{formatBytes(downloadBytes)}{downloadTotal ? " / "+formatBytes(downloadTotal) : ""}{downloadSpeed > 0 ? " · "+formatBytes(downloadSpeed)+"/s" : ""}{downloadEta !== null && downloadEta > 0 ? " · "+formatEta(downloadEta)+" left" : ""}</p></div>
+                      <span className="text-sm font-black text-indigo-200">{downloadTotal ? Math.round(downloadProgress)+"%" : "LIVE"}</span>
+                    </div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 transition-[width] duration-300" style={{width:downloadTotal ? Math.max(1,downloadProgress)+"%" : "35%"}}/></div>
+                    {transferState === "complete" && <p className="mt-2 text-[11px] font-semibold text-emerald-300"><Check className="mr-1 inline" size={13}/> Saved successfully</p>}
+                  </div>
+                )}
+
                 {error && <div role="alert" className="mt-3 rounded-2xl border border-rose-400/20 bg-rose-500/10 p-3 text-left">
                   <div className="flex items-start gap-2"><AlertCircle className="mt-0.5 shrink-0 text-rose-300" size={17}/><div className="min-w-0 flex-1"><p className="text-xs font-bold text-rose-200">Something went wrong</p><p className="mt-1 text-xs leading-5 text-rose-200/70">{error}</p></div><button onClick={retry} disabled={loading} className="rounded-lg border border-rose-300/20 px-2 py-1 text-[11px] font-semibold text-rose-100">Retry</button></div>
                 </div>}
@@ -580,7 +605,7 @@ export default function App() {
 
             <div className="glass rounded-3xl p-5 md:col-span-2">
               <div className="flex items-center justify-between">
-                <div><p className="text-sm font-bold">Download settings</p><p className="mt-1 text-xs text-slate-500">Start a native Chrome download. Direct public files are proxied without a completed worker-side copy; conversion is used only when needed.</p></div>
+                <div><p className="text-sm font-bold">Download settings</p><p className="mt-1 text-xs text-slate-500">Download directly inside Downly with live progress. Direct public files use the fast path; conversion is used only when needed.</p></div>
                 <TrendingDown className="text-slate-600" size={20} />
               </div>
               {isYouTube(url) && info?.note && (
@@ -641,7 +666,7 @@ export default function App() {
                       );
                     })}
                   </div>
-                  <p className="mt-2 text-[11px] leading-5 text-slate-500">Clicking Download opens a native attachment response so Chrome's Downloads manager receives the bytes directly. Downly does not first save the finished file on the worker.</p>
+                  <p className="mt-2 text-[11px] leading-5 text-slate-500">Downloads stay inside Downly with live transfer progress. The browser receives the stream and Downly renders the progress.</p>
                 </div>
               )}
               <button onClick={handleDownload} disabled={loading || (!availableFormats.length && !detectedMedia.some((item) => item.url === selectedMediaUrl && (item.type === "video" || item.type === "audio" || item.type === "stream")))} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 font-bold transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50">
