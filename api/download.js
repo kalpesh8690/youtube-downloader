@@ -29,6 +29,7 @@ export default async function handler(req, res) {
     const contentLength = upstream.headers.get("content-length");
     res.statusCode = 200;
     res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Disposition", 'attachment; filename="downly-download"');
     res.setHeader("Cache-Control", "no-store");
     if (contentLength) res.setHeader("Content-Length", contentLength);
 
