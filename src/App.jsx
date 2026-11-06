@@ -335,13 +335,39 @@ export default function App() {
       const status = await getWorkerStatus(jobId);
       const workerTotal = Number(status.totalBytes || status.total) || 0;
       const workerBytes = Number(status.bytes) || 0;
-      if (status.status === "ready") return status;
+      const workerProgress = Number(status.progress);
+      const workerSpeed = Number(status.speedBps) || 0;
+      const workerEta = Number(status.etaSeconds) || 0;
+
+      setDownloadSpeed(workerSpeed);
+      setDownloadEta(workerEta);
+
+      if (status.status === "ready") {
+        setProgress(100);
+        setProgressLabel("yt-dlp · file ready");
+        return status;
+      }
+
       if (["failed", "error", "cancelled", "interrupted"].includes(status.status)) {
         throw new Error(status.error || "Worker download stopped.");
       }
-      setProgress(workerTotal ? Math.min(95, Math.round((workerBytes / workerTotal) * 95)) : Math.min(90, progress + 2));
-      setProgressLabel(workerTotal ? "yt-dlp · " + formatBytes(workerBytes) + " / " + formatBytes(workerTotal) : "yt-dlp · " + (status.status || "working"));
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      if (Number.isFinite(workerProgress)) {
+        setProgress(Math.min(99, Math.max(0, Math.round(workerProgress))));
+      } else if (workerTotal && workerBytes) {
+        setProgress(Math.min(99, Math.round((workerBytes / workerTotal) * 100)));
+      } else {
+        setProgress(0);
+      }
+
+      const detail = workerTotal
+        ? formatBytes(workerBytes) + " / " + formatBytes(workerTotal)
+        : formatBytes(workerBytes) + " downloaded";
+      const live = workerSpeed ? " · " + formatBytes(workerSpeed) + "/s" : "";
+      const eta = workerEta ? " · ETA " + formatEta(workerEta) : "";
+      setProgressLabel("yt-dlp · " + detail + live + eta);
+
+      await new Promise((resolve) => setTimeout(resolve, 700));
     }
   };
 
