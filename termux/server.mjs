@@ -7,7 +7,7 @@ const PORT=Number(process.env.PORT||3000);
 const WORKER_URL=(process.env.YTDLP_WORKER_URL||"http://127.0.0.1:8080").replace(/\/$/,"");
 const WORKER_TOKEN=process.env.YTDLP_WORKER_TOKEN||"";
 const DIST=new URL("../dist/",import.meta.url);
-const mime={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".json":"application/json; charset=utf-8",".svg":"image/svg+xml",".png":"image/png",".jpg":"image/jpeg",".jpeg":"image/jpeg",".webp":"image/webp",".ico":"image/x-icon"};
+const mime={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".json":"application/json; charset=utf-8",".svg":"image/svg+xml",".png":"image/png",".jpg":"image/jpeg",".jpeg":"image/jpeg",".webp":"image/webp",".ico":"image/x-icon",".txt":"text/plain; charset=utf-8",".webmanifest":"application/manifest+json; charset=utf-8"};
 const securityHeaders = {
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
@@ -37,7 +37,7 @@ async function readJsonBody(req, maxBytes=32768) {
   let raw="";
   for await(const chunk of req) {
     raw += chunk;
-    if (raw.length > maxBytes) throw Object.assign(new Error("Request body is too large"), {statusCode:413});
+    if (Buffer.byteLength(raw, "utf8") > maxBytes) throw Object.assign(new Error("Request body is too large"), {statusCode:413});
   }
   try { return JSON.parse(raw || "{}"); }
   catch { throw Object.assign(new Error("Invalid JSON body"), {statusCode:400}); }
