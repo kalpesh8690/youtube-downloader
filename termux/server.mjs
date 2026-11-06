@@ -167,7 +167,10 @@ if(u.pathname==="/api/ytdlp/stream"&&(req.method==="GET"||req.method==="POST")){
       audio_only:values.audio_only==="true"?"true":"false",
       filename:String(values.filename||"")
     };
-    const upstream=await workerFetch("/v1/stream?"+new URLSearchParams(workerValues).toString(),{method:"GET",signal:controller.signal});
+    const upstream=await workerFetch("/v1/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+      ...workerValues,
+      audio_only:workerValues.audio_only==="true"
+    }),signal:controller.signal});
     const headers={...securityHeaders};
     for(const name of ["content-type","content-disposition","cache-control","accept-ranges","content-length","content-range"]){
       const value=upstream.headers.get(name);if(value)headers[name]=value;
