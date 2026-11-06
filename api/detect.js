@@ -1,3 +1,5 @@
+import { requestPublicUrl, readStreamBuffer } from "../lib/public-https.js";
+
 const VIDEO_EXTENSIONS = new Set([".mp4",".webm",".mov",".m4v",".mkv",".avi",".m3u8",".mpd"]);
 const AUDIO_EXTENSIONS = new Set([".mp3",".m4a",".aac",".wav",".ogg",".opus"]);
 
@@ -71,27 +73,26 @@ function extractMedia(html, pageUrl) {
 }
 
 async function fetchPage(url) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
-  try {
-    const response = await fetch(url, {
-      redirect: "follow",
-      headers: {
-        Accept: "text/html,application/xhtml+xml",
-        "User-Agent": "Downly/1.0 media-detector"
-      },
-      signal: controller.signal
-    });
-    const contentType = response.headers.get("content-type") || "";
-    if (!response.ok) throw new Error("The website returned HTTP " + response.status);
-    if (!contentType.includes("text/html") && !contentType.includes("application/xhtml+xml")) {
-      return { response, html: "" };
-    }
-    const html = await response.text();
-    return { response, html: html.slice(0, 5_000_000) };
-  } finally {
-    clearTimeout(timeout);
+  const { response, url: finalUrl } = await requestPublicUrl(url, {
+    timeoutMs: 9000,
+    maxRedirects: 3,
+    accept: "text/html,application/xhtml+xml"
+  });
+  const contentType = response.headers["content-type"] || "";
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    response.resume();
+    throw new Error("The website returned HTTP " + response.statusCode);
   }
+  const responseView = {
+    url: finalUrl,
+    headers: { get: (name) => response.headers[String(name).toLowerCase()] || null }
+  };
+  if (!contentType.includes("text/html") && !contentType.includes("application/xhtml+xml")) {
+    response.destroy();
+    return { response: responseView, html: "" };
+  }
+  const buffer = await readStreamBuffer(response, 5_000_000);
+  return { response: responseView, html: buffer.toString("utf8") };
 }
 
 export default async function handler(req, res) {
@@ -105,7 +106,7 @@ export default async function handler(req, res) {
     try { return JSON.parse(req.body)?.url; } catch { return null; }
   })() : req.body?.url);
 
-  if (!isHttpUrl(rawUrl)) return res.status(400).json(errorBody("A valid HTTP(S) webpage URL is required.", "INVALID_URL"));
+  if (typeof rawUrl !== "string" || rawUrl.length > 4096 || !isHttpUrl(rawUrl)) return res.status(400).json(errorBody("A valid HTTP(S) webpage URL is required.", "INVALID_URL"));
 
   try {
     const { response, html } = await fetchPage(rawUrl);
