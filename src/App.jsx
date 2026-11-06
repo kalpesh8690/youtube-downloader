@@ -83,7 +83,8 @@ export default function App() {
 
   useEffect(() => {
     try {
-      setHistory(JSON.parse(localStorage.getItem("downly-history") || "[]"));
+      const saved = JSON.parse(localStorage.getItem("downly-history") || "[]");
+      setHistory(Array.isArray(saved) ? saved.filter((item) => item && typeof item.url === "string").slice(0, 10) : []);
     } catch {
       setHistory([]);
     }
@@ -321,7 +322,7 @@ export default function App() {
     setError("");
     setMessage("");
 
-    if (workerStatus !== "online") {
+    if (workerStatus === "offline") {
       setError("The Downly worker is offline. Start the Termux worker and retry.");
       return;
     }
