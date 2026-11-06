@@ -558,14 +558,14 @@ export default function App() {
           .slice(0, 140) || "downly-download";
         const filename = title + (audioOnly ? ".mp3" : ".mp4");
 
-        const href = directUrl
-          ? directUrl
-          : "/api/ytdlp/stream?" + new URLSearchParams({
-              url: url.trim(),
-              format: selector,
-              audio_only: audioOnly ? "true" : "false",
-              filename
-            }).toString();
+        const href = "/api/ytdlp/stream?" + new URLSearchParams({
+          url: url.trim(),
+          direct_url: directUrl || "",
+          referer: info?.webpageUrl || url.trim(),
+          format: selector,
+          audio_only: audioOnly ? "true" : "false",
+          filename
+        }).toString();
 
         const anchor = document.createElement("a");
         anchor.href = href;
@@ -576,12 +576,14 @@ export default function App() {
         anchor.click();
         anchor.remove();
 
-        setProgressLabel(directUrl ? "Chrome Downloads · direct source" : "Chrome Downloads · converting/streaming");
+        setTransferState("browser");
+        setProgress(0);
+        setProgressLabel("Chrome Downloads · download requested");
         setMessage(directUrl
-          ? "Fast direct download started in Chrome Downloads."
+          ? "Direct source sent to Chrome Downloads. This page does not buffer the file."
           : audioOnly
-            ? "MP3 conversion started. Chrome Downloads will receive the converted file."
-            : "Chrome download started. This quality requires server-side video/audio merge.");
+            ? "MP3 conversion stream sent to Chrome Downloads. The file is converted while it streams."
+            : "Media stream sent to Chrome Downloads. The worker streams the result without saving a completed copy first.");
         saveHistory({
           url: url.trim(),
           title: info?.title || "Media download",
@@ -600,15 +602,15 @@ export default function App() {
       if (media?.url) {
         const filename = ((info?.title || "downly-download").replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 140) || "downly-download")
           + (media.type === "audio" ? ".mp3" : ".mp4");
-        const isDirect = /\\.(?:mp4|webm|m4v|mov|mkv|mp3|m4a)(?:$|\\?)/i.test(media.url);
-        const href = isDirect
-          ? media.url
-          : "/api/ytdlp/stream?" + new URLSearchParams({
-              url: media.url,
-              format: "best",
-              audio_only: media.type === "audio" ? "true" : "false",
-              filename
-            }).toString();
+        const isDirect = /\.(?:mp4|webm|m4v|mov|mkv|mp3|m4a)(?:$|\?)/i.test(media.url);
+        const href = "/api/ytdlp/stream?" + new URLSearchParams({
+          url: url.trim(),
+          direct_url: isDirect ? media.url : "",
+          referer: url.trim(),
+          format: "best",
+          audio_only: media.type === "audio" ? "true" : "false",
+          filename
+        }).toString();
         const anchor = document.createElement("a");
         anchor.href = href;
         anchor.download = filename;
@@ -617,8 +619,12 @@ export default function App() {
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
-        setProgressLabel("Chrome Downloads · receiving media");
-        setMessage("Download started in Chrome Downloads.");
+        setTransferState("browser");
+        setProgress(0);
+        setProgressLabel("Chrome Downloads · download requested");
+        setMessage(isDirect
+          ? "Direct media sent to Chrome Downloads. Downly does not buffer the file."
+          : "Media stream sent to Chrome Downloads.");
         setLoading(false);
         return;
       }
@@ -734,7 +740,7 @@ export default function App() {
                       <div className="rounded-xl bg-white/[0.03] p-2"><span className="block text-[10px] text-slate-600">SPEED</span><b className="text-xs">{downloadSpeed ? formatBytes(downloadSpeed)+"/s" : "—"}</b></div>
                     </div>}
                     {downloadMeta && (downloadEta > 0 || downloadMeta.etaSeconds > 0) && <div className="mt-2 flex items-center gap-3 text-[11px] text-slate-500"><span><Gauge className="mr-1 inline" size={12}/> Live transfer</span><span><Clock3 className="mr-1 inline" size={12}/> ETA {formatEta(downloadEta || downloadMeta.etaSeconds)}</span></div>}
-                    {(transferState==="downloading" || transferState==="paused") && <div className="mt-3 flex gap-2">
+                    {(transferState==="worker-downloading" || transferState==="paused") && <div className="mt-3 flex gap-2">
                       <button onClick={transferState==="downloading" ? pauseDownload : resumeDownload} className="flex-1 rounded-xl bg-indigo-500 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-400">
                         {transferState==="downloading" ? <><Pause className="mr-1 inline" size={14}/> Pause</> : <><Play className="mr-1 inline" size={14}/> Resume</>}
                       </button>
@@ -787,7 +793,7 @@ export default function App() {
 
             <div className="glass rounded-3xl p-5 md:col-span-2">
               <div className="flex items-center justify-between">
-                <div><p className="text-sm font-bold">Download settings</p><p className="mt-1 text-xs text-slate-500">Stream the original source file without buffering it in app memory.</p></div>
+                <div><p className="text-sm font-bold">Download settings</p><p className="mt-1 text-xs text-slate-500">Start a native Chrome download. Direct source files are proxied byte-for-byte; conversion happens only when needed.</p></div>
                 <TrendingDown className="text-slate-600" size={20} />
               </div>
               {isYouTube(url) && info?.note && (
