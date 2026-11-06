@@ -32,6 +32,37 @@ function friendlyError(error, status) {
   return error || "Something went wrong. Please try again.";
 }
 
+
+async function downloadAuthorizedMedia(mediaUrl, format, quality) {
+  const response = await fetch("/api/download", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "*/*" },
+    body: JSON.stringify({ url: mediaUrl, format, quality })
+  });
+
+  if (!response.ok) {
+    let data = null;
+    try { data = await response.json(); } catch {}
+    throw new Error(friendlyError(data?.error, response.status));
+  }
+
+  const blob = await response.blob();
+  if (!blob.size) throw new Error("The server returned an empty file.");
+
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  const filename = match?.[1] || `downly-${Date.now()}.${format.toLowerCase()}`;
+
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
 export default function App() {
   const [url, setUrl] = useState("");
   const [quality, setQuality] = useState("1080p");
@@ -129,6 +160,37 @@ export default function App() {
   };
 
   const retry = () => submit();
+
+  const handleDownload = async () => {
+    setError("");
+    setMessage("");
+
+    if (!info) {
+      await submit();
+      return;
+    }
+
+    if (!info.downloadUrl) {
+      setError("No downloadable media file was provided by the API. This YouTube deployment currently supports metadata only.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setProgressLabel("Preparing download...");
+      setProgress(20);
+      await downloadAuthorizedMedia(info.downloadUrl, format, quality);
+      setProgress(100);
+      setProgressLabel("Download complete");
+      setMessage("File downloaded successfully.");
+    } catch (e) {
+      setProgress(0);
+      setProgressLabel("Download failed");
+      setError(e?.message || "Unable to download the file.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen overflow-hidden bg-[#060914] text-slate-100">
@@ -268,8 +330,9 @@ export default function App() {
                   </select>
                 </label>
               </div>
-              <button onClick={submit} disabled={loading} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 font-bold transition hover:bg-indigo-400 disabled:opacity-60">
-                <Download size={18} /> Download {format} · {quality}
+              <button onClick={handleDownload} disabled={loading} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 font-bold transition hover:bg-indigo-400 disabled:opacity-60">
+                {loading ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
+                {loading ? "Preparing..." : `Download ${format} · ${quality}`}
               </button>
             </div>
           </div>
