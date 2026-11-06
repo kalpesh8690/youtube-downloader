@@ -194,53 +194,46 @@ export default function App() {
         signal: controller.signal
       });
       const crawl = await crawlResponse.json().catch(() => null);
-      if (crawlResponse.ok && crawl?.ok && Array.isArray(crawl.items) && crawl.items.length) {
-        setInfo((prev) => prev || { title: crawl.title || safeHostname(value), author: safeHostname(value), thumbnail: null });
-        const media = crawl.items.map((item) => ({
-          url: item.url,
-          type: item.kind === "hls" || item.kind === "dash" ? "stream" : (String(item.mime || "").startsWith("audio/") ? "audio" : "video"),
-          ext: item.extension,
-          mime: item.mime,
-          title: crawl.title
-        }));
-        setDetectedMedia(media);
-        const first = media.find((item) => item.type === "video" || item.type === "audio");
-        setSelectedMediaUrl(first?.url || media[0]?.url || "");
-        setScanMeta({ pagesScanned: 1, count: media.length, directCount: media.filter((item) => item.type !== "stream").length, streamCount: media.filter((item) => item.type === "stream").length, partial: false });
-
-        setProgressLabel("Page media scan ready");
-        setInspectState("ready");
-        setMessage("Found " + media.length + " media source(s) on this page.");
-        return crawl;
+      if (!crawlResponse.ok || !crawl?.ok) {
+        throw new Error(crawl?.error || "The media crawler could not inspect this page.");
       }
 
-      const detectResponse = await fetch("/api/detect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ url: value }),
-        signal: controller.signal
-      });
-      const detect = await detectResponse.json().catch(() => null);
-      if (!detectResponse.ok || !detect?.ok) throw new Error(data?.error || detect?.error || "No downloadable media was found.");
-
-      const media = Array.isArray(detect.media) ? detect.media.filter((item) => item?.url) : [];
-      setInfo((prev) => prev || { title: detect.title || safeHostname(value), author: safeHostname(value), thumbnail: null });
+      const media = Array.isArray(crawl.items) ? crawl.items.filter((item) => item?.url) : [];
+      setInfo((prev) => prev || { title: crawl.title || safeHostname(value), author: safeHostname(value), thumbnail: null });
       setAvailableFormats([]);
-      setDetectedMedia(media);
-      const firstDirect = media.find((item) => item.type === "video" || item.type === "audio");
-      setSelectedMediaUrl(firstDirect?.url || "");
+      setDetectedMedia(media.map((item) => ({
+        url: item.url,
+        type: item.kind === "hls" || item.kind === "dash"
+          ? "stream"
+          : (String(item.mime || "").startsWith("audio/") ? "audio" : "video"),
+        ext: item.extension,
+        mime: item.mime,
+        title: crawl.title
+      })));
+      const mapped = media.map((item) => ({
+        url: item.url,
+        type: item.kind === "hls" || item.kind === "dash"
+          ? "stream"
+          : (String(item.mime || "").startsWith("audio/") ? "audio" : "video"),
+        ext: item.extension,
+        mime: item.mime,
+        title: crawl.title
+      }));
+      const first = mapped.find((item) => item.type === "video" || item.type === "audio") || mapped[0];
+      setSelectedMediaUrl(first?.url || "");
       setScanMeta({
-        pagesScanned: Number(detect.pagesScanned) || 1,
-        count: Number(detect.count) || media.length,
-        directCount: Number(detect.directCount) || media.filter((item) => item.type === "video" || item.type === "audio").length,
-        streamCount: Number(detect.streamCount) || media.filter((item) => item.type === "stream").length,
-        partial: Boolean(detect.partial)
+        pagesScanned: Number(crawl.pagesScanned) || 1,
+        count: media.length,
+        directCount: media.filter((item) => item.kind !== "hls" && item.kind !== "dash").length,
+        streamCount: media.filter((item) => item.kind === "hls" || item.kind === "dash").length,
+        partial: Boolean(crawl.partial)
       });
-
       setProgressLabel("Media scan ready");
       setInspectState("ready");
-      setMessage(media.length ? "Found " + media.length + " media source(s). Select a direct file to download." : "No downloadable media was found.");
-      return detect;
+      setMessage(media.length
+        ? "Found " + media.length + " public media source(s) across " + (Number(crawl.pagesScanned) || 1) + " page(s)."
+        : "No public media files or supported streams were found in the scanned pages.");
+      return crawl;
     } catch (e) {
       if (e?.name === "AbortError") return null;
       setInspectState("error");
