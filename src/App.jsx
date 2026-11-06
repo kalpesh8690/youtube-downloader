@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   AlertCircle, ArrowRight, Check, Clipboard, Download, FileVideo, Globe, History,
   Link2, Loader2, Menu, Play, RefreshCw, ShieldCheck, Sparkles,
-  TrendingDown, X, Zap, Trash2
+  TrendingDown, X, Zap, Trash2, Gauge
 } from "lucide-react";
 
 const outputModes = ["MP4", "MP3"];
@@ -251,6 +251,7 @@ export default function App() {
 
   const clearWorkspace = () => {
     inspectAbortRef.current?.abort();
+    setLoading(false);
     setUrl("");
     setInfo(null);
     setAvailableFormats([]);
@@ -348,7 +349,7 @@ export default function App() {
         const outputExt = needsMp3Conversion ? "mp3" : (ext || (media.type === "audio" ? "mp3" : "mp4"));
         const filename = ((info?.title || "downly-download").replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 140) || "downly-download") + "." + outputExt;
         const href = "/api/ytdlp/stream?" + new URLSearchParams({
-          url: isDirect ? url.trim() : media.url,
+          url: isDirect && !needsMp3Conversion ? url.trim() : media.url,
           direct_url: isDirect && !needsMp3Conversion ? media.url : "",
           referer: url.trim(),
           format: "best",
@@ -468,7 +469,7 @@ export default function App() {
                   <span className={error ? "text-rose-300" : transferState==="browser" ? "text-emerald-300" : "text-indigo-200"}>{error ? "Action required" : transferState==="browser" ? "Sent to Chrome Downloads" : progressLabel}</span>
                 </div>
 
-                {loading && inspectState === "loading" && (
+                {inspectState === "loading" && (
                   <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3 text-left" role="status" aria-live="polite">
                     <div className="mb-2 flex items-center justify-between text-xs">
                       <span className="truncate pr-3 text-slate-400">{progressLabel}</span>
