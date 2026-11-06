@@ -245,10 +245,12 @@ export default function App() {
         const downloadUrl = "/api/ytdlp/download?url=" + encodeURIComponent(url.trim())
           + "&format=" + encodeURIComponent(workerFormat)
           + "&audio_only=" + String(audioOnly);
-        setProgress(8);
+        let indeterminateProgress = 8;
+        setProgress(indeterminateProgress);
         setProgressLabel("yt-dlp is preparing your file...");
         const result = await downloadWithProgress(downloadUrl, (received, total) => {
-          const pct = total > 0 ? Math.min(99, Math.round((received / total) * 100)) : Math.min(95, progress + 1);
+          if (!total) indeterminateProgress = Math.min(95, indeterminateProgress + 1);
+          const pct = total > 0 ? Math.min(99, Math.round((received / total) * 100)) : indeterminateProgress;
           setProgress(pct);
           setProgressLabel(total ? "Downloading " + formatBytes(received) + " / " + formatBytes(total) : "Downloading " + formatBytes(received));
         });
