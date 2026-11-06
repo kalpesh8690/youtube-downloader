@@ -201,15 +201,6 @@ export default function App() {
       const media = Array.isArray(crawl.items) ? crawl.items.filter((item) => item?.url) : [];
       setInfo((prev) => prev || { title: crawl.title || safeHostname(value), author: safeHostname(value), thumbnail: null });
       setAvailableFormats([]);
-      setDetectedMedia(media.map((item) => ({
-        url: item.url,
-        type: item.kind === "hls" || item.kind === "dash"
-          ? "stream"
-          : (String(item.mime || "").startsWith("audio/") ? "audio" : "video"),
-        ext: item.extension,
-        mime: item.mime,
-        title: crawl.title
-      })));
       const mapped = media.map((item) => ({
         url: item.url,
         type: item.kind === "hls" || item.kind === "dash"
@@ -219,6 +210,7 @@ export default function App() {
         mime: item.mime,
         title: crawl.title
       }));
+      setDetectedMedia(mapped);
       const first = mapped.find((item) => item.type === "video" || item.type === "audio") || mapped[0];
       setSelectedMediaUrl(first?.url || "");
       setScanMeta({
