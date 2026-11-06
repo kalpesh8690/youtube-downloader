@@ -42,3 +42,26 @@ The download API preserves the source file and streams it without transcoding. I
 ## Configuration
 
 Optional DOWNLOAD_MAX_BYTES sets the maximum streamed file size (default 500 MiB; hard cap 2 GiB). Vercel function duration is configured in vercel.json.
+
+
+## yt-dlp worker
+
+The repository now includes a separate Docker/Python worker under worker/. It uses yt-dlp and FFmpeg and is intended for authorized media processing.
+
+Build:
+docker build -t downly-ytdlp-worker ./worker
+
+Run:
+docker run --rm -p 8080:8080 -e ENABLE_YTDLP=true -e ALLOW_YOUTUBE=false -e WORKER_TOKEN=change-me downly-ytdlp-worker
+
+Worker health:
+GET /health
+
+Worker media endpoint:
+POST /v1/media/download
+
+The Vercel proxy endpoint is POST /api/ytdlp/download. Configure YTDLP_WORKER_URL and YTDLP_WORKER_TOKEN in Vercel.
+
+YouTube processing is disabled by default. Enable it only for content you own or are authorized to process. The worker does not implement DRM or access-control bypassing.
+
+yt-dlp currently recommends Python 3.11+, FFmpeg/ffprobe, yt-dlp-ejs and a supported JavaScript runtime for full YouTube support.
