@@ -195,6 +195,28 @@ export default function App() {
         setInspectState("ready");
       }
 
+      const crawlResponse = await fetch("/api/media/crawl?"+new URLSearchParams({url:value}), { signal: controller.signal });
+      const crawl = await crawlResponse.json().catch(() => null);
+      if (crawlResponse.ok && crawl?.ok && Array.isArray(crawl.items) && crawl.items.length) {
+        setInfo((prev) => prev || { title: crawl.title || safeHostname(value), author: safeHostname(value), thumbnail: null });
+        const media = crawl.items.map((item) => ({
+          url: item.url,
+          type: item.kind === "hls" || item.kind === "dash" ? "stream" : (String(item.mime || "").startsWith("audio/") ? "audio" : "video"),
+          ext: item.extension,
+          mime: item.mime,
+          title: crawl.title
+        }));
+        setDetectedMedia(media);
+        const first = media.find((item) => item.type === "video" || item.type === "audio");
+        setSelectedMediaUrl(first?.url || media[0]?.url || "");
+        setScanMeta({ pagesScanned: 1, count: media.length, directCount: media.filter((item) => item.type !== "stream").length, streamCount: media.filter((item) => item.type === "stream").length, partial: false });
+        setProgress(100);
+        setProgressLabel("Page media scan ready");
+        setInspectState("ready");
+        setMessage("Found " + media.length + " media source(s) on this page.");
+        return crawl;
+      }
+
       const detectResponse = await fetch("/api/detect", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -527,6 +549,7 @@ export default function App() {
         const selected = availableFormats.find((x) => x.id === quality && (audioOnly ? x.hasAudio : x.hasVideo))
           || availableFormats.find((x) => audioOnly ? x.hasAudio : x.hasVideo)
           || availableFormats[0];
+        const directUrl = !audioOnly && selected?.hasAudio && selected?.directUrl ? selected.directUrl : null;
         const selector = audioOnly ? "ba/b" : (selected?.selector || "bv*+ba/b");
         const title = String(info?.title || "downly-download")
           .replace(/[\\/:*?"<>|]+/g, " ")
@@ -535,13 +558,14 @@ export default function App() {
           .slice(0, 140) || "downly-download";
         const filename = title + (audioOnly ? ".mp3" : ".mp4");
 
-        const params = new URLSearchParams({
-          url: url.trim(),
-          format: selector,
-          audio_only: audioOnly ? "true" : "false",
-          filename
-        });
-        const href = "/api/ytdlp/stream?" + params.toString();
+        const href = directUrl
+          ? directUrl
+          : "/api/ytdlp/stream?" + new URLSearchParams({
+              url: url.trim(),
+              format: selector,
+              audio_only: audioOnly ? "true" : "false",
+              filename
+            }).toString();
 
         const anchor = document.createElement("a");
         anchor.href = href;
@@ -552,8 +576,12 @@ export default function App() {
         anchor.click();
         anchor.remove();
 
-        setProgressLabel("Chrome Downloads · receiving media");
-        setMessage("Download started in Chrome Downloads. The webpage is not buffering the file.");
+        setProgressLabel(directUrl ? "Chrome Downloads · direct source" : "Chrome Downloads · converting/streaming");
+        setMessage(directUrl
+          ? "Fast direct download started in Chrome Downloads."
+          : audioOnly
+            ? "MP3 conversion started. Chrome Downloads will receive the converted file."
+            : "Chrome download started. This quality requires server-side video/audio merge.");
         saveHistory({
           url: url.trim(),
           title: info?.title || "Media download",
@@ -572,14 +600,17 @@ export default function App() {
       if (media?.url) {
         const filename = ((info?.title || "downly-download").replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 140) || "downly-download")
           + (media.type === "audio" ? ".mp3" : ".mp4");
-        const params = new URLSearchParams({
-          url: media.url,
-          format: "best",
-          audio_only: media.type === "audio" ? "true" : "false",
-          filename
-        });
+        const isDirect = /\\.(?:mp4|webm|m4v|mov|mkv|mp3|m4a)(?:$|\\?)/i.test(media.url);
+        const href = isDirect
+          ? media.url
+          : "/api/ytdlp/stream?" + new URLSearchParams({
+              url: media.url,
+              format: "best",
+              audio_only: media.type === "audio" ? "true" : "false",
+              filename
+            }).toString();
         const anchor = document.createElement("a");
-        anchor.href = "/api/ytdlp/stream?" + params.toString();
+        anchor.href = href;
         anchor.download = filename;
         anchor.rel = "noopener";
         anchor.style.display = "none";
