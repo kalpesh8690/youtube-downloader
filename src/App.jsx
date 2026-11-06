@@ -651,7 +651,7 @@ export default function App() {
                 </div>
                 <button onClick={submit} disabled={loading || !url.trim()} className="mt-2 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-white font-bold text-slate-950 transition hover:bg-indigo-50 disabled:cursor-wait disabled:opacity-60">
                   {loading ? <Loader2 className="animate-spin" size={18}/> : <Download size={18}/>}
-                  {loading ? "Inspecting..." : "Inspect & continue"} <ArrowRight size={16}/>
+                  {loading || inspectState==="loading" ? "Inspecting media..." : inspectState==="ready" ? "Refresh metadata" : "Inspect & continue"} <ArrowRight size={16}/>
                 </button>
 
                 <div className="mt-3 flex items-center justify-between rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2 text-[11px]">
@@ -719,7 +719,11 @@ export default function App() {
                   </div>
                 </div>
               )}
-              <div className="mt-2 text-xs text-slate-500">{info?.author || "Scan a website or paste a direct media URL"}</div>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                <span>{info?.author || "Scan a website or paste a direct media URL"}</span>
+                {info?.extractor && <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">{info.extractor}</span>}
+                {info?.durationString && <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">{info.durationString}</span>}
+              </div>
             </div>
 
             <div className="glass rounded-3xl p-5 md:col-span-2">
