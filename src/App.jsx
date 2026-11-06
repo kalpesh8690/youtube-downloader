@@ -21,13 +21,19 @@ export default function App(){
  const[loading,setLoading]=useState(false);
  const[open,setOpen]=useState(false);
  const[message,setMessage]=useState('');
+ const[info,setInfo]=useState(null);
  const valid=useMemo(()=>isYouTube(url),[url]);
 
- const submit=()=>{
+ const submit=async()=>{
   setMessage('');
-  if(!valid){setMessage('Paste a valid YouTube URL to continue.');return}
+  if(!valid){setInfo(null);setMessage('Paste a valid YouTube URL to continue.');return}
   setLoading(true);
-  setTimeout(()=>{setLoading(false);setMessage('Ready — connect your backend download endpoint to start the file transfer.')},800);
+  try{
+   const r=await fetch('/api/youtube/info',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+   const data=await r.json();
+   if(!r.ok) throw new Error(data.error||'Unable to fetch video information');
+   setInfo(data); setMessage('Video found. Media downloading is limited to content you own or are authorized to download.');
+  }catch(e){setInfo(null);setMessage(e.message)}finally{setLoading(false)}
  };
 
  return <div className="min-h-screen overflow-hidden bg-[#070b14]">
@@ -66,8 +72,8 @@ export default function App(){
     <div className="grid gap-4 md:grid-cols-3">
      <div className="rounded-3xl border border-white/8 bg-white/[0.035] p-5">
       <div className="mb-8 flex items-center justify-between"><FileVideo className="text-indigo-300" size={24}/><span className="rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-slate-500">Preview</span></div>
-      <div className="aspect-video rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 p-4"><div className="flex h-full items-center justify-center rounded-xl border border-white/5"><Play className="fill-white text-white" size={28}/></div></div>
-      <div className="mt-4 h-3 w-4/5 rounded-full bg-white/10"/><div className="mt-2 h-2 w-2/5 rounded-full bg-white/5"/>
+      <div className="aspect-video overflow-hidden rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 p-1">{info?.thumbnail?<img src={info.thumbnail} alt="" className="h-full w-full rounded-xl object-cover"/>:<div className="flex h-full items-center justify-center rounded-xl border border-white/5"><Play className="fill-white text-white" size={28}/></div>}</div>
+      <div className="mt-4 text-sm font-semibold text-white line-clamp-2">{info?.title||'Video preview'}</div><div className="mt-2 text-xs text-slate-500">{info?.author||'Paste a URL to load video information'}</div>
      </div>
      <div className="rounded-3xl border border-white/8 bg-white/[0.035] p-5 md:col-span-2">
       <div className="flex items-center justify-between"><div><p className="text-sm font-bold">Download settings</p><p className="mt-1 text-xs text-slate-500">Choose your preferred output.</p></div><TrendingDown className="text-slate-600" size={20}/></div>
@@ -82,7 +88,7 @@ export default function App(){
 
    <section id="features" className="border-y border-white/5 bg-white/[0.02]"><div className="mx-auto max-w-7xl px-5 py-20 sm:px-8"><div className="max-w-xl"><p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">Built for speed</p><h2 className="mt-3 text-3xl font-bold tracking-tight">Everything you need. Nothing you don't.</h2></div><div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{features.map(([title,desc,Icon])=><div key={title} className="rounded-2xl border border-white/8 bg-[#0b101b] p-5"><div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-500/10 text-indigo-300"><Icon size={18}/></div><h3 className="mt-5 font-bold">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-500">{desc}</p></div>)}</div></div></section>
 
-   <section id="how" className="mx-auto max-w-5xl px-5 py-20 sm:px-8"><div className="text-center"><p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">How it works</p><h2 className="mt-3 text-3xl font-bold">Three simple steps</h2></div><div className="mt-10 grid gap-4 md:grid-cols-3">{[['01','Paste your link','Add a supported video URL.'],['02','Choose output','Select format and quality.'],['03','Start download','Your backend handles the media transfer.']].map(([n,t,d])=><div className="rounded-2xl border border-white/8 bg-white/[0.035] p-6" key={n}><span className="text-sm font-bold text-indigo-300">{n}</span><h3 className="mt-8 font-bold">{t}</h3><p className="mt-2 text-sm leading-6 text-slate-500">{d}</p></div>)}</div></section>
+   <section id="how" className="mx-auto max-w-5xl px-5 py-20 sm:px-8"><div className="text-center"><p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">How it works</p><h2 className="mt-3 text-3xl font-bold">Three simple steps</h2></div><div className="mt-10 grid gap-4 md:grid-cols-3">{[['01','Paste your link','Add a supported video URL.'],['02','Choose output','Select format and quality.'],['03','Start download','The API validates the URL and returns video metadata.']].map(([n,t,d])=><div className="rounded-2xl border border-white/8 bg-white/[0.035] p-6" key={n}><span className="text-sm font-bold text-indigo-300">{n}</span><h3 className="mt-8 font-bold">{t}</h3><p className="mt-2 text-sm leading-6 text-slate-500">{d}</p></div>)}</div></section>
 
    <section id="history" className="mx-auto max-w-7xl px-5 pb-20 sm:px-8"><div className="rounded-3xl border border-white/8 bg-white/[0.035] p-6 sm:p-8"><div className="flex items-center gap-3"><History className="text-indigo-300" size={21}/><div><h2 className="font-bold">Download history</h2><p className="text-xs text-slate-500">Your recent downloads will appear here.</p></div></div><div className="mt-7 flex min-h-32 items-center justify-center rounded-2xl border border-dashed border-white/10 text-sm text-slate-600">No downloads yet</div></div></section>
   </main>
