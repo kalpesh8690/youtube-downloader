@@ -5,8 +5,8 @@ import {
   TrendingDown, X, Zap
 } from "lucide-react";
 
-const formats = ["Original"];
-const qualities = ["Source"];
+const formats = ["Original", "MP4", "MP3"];
+const qualities = ["Source", "Best available"];
 const features = [
   ["Lightning fast", "A clean workflow designed to minimize clicks.", Zap],
   ["Direct media", "Download public direct video and audio files you are authorized to save.", FileVideo],
@@ -190,25 +190,55 @@ export default function App() {
     setError("");
     setMessage("");
 
+    const youtube = isYouTube(url);
     const media = detectedMedia.find((item) => item.url === selectedMediaUrl)
       || detectedMedia.find((item) => item.type === "video" || item.type === "audio");
 
-    if (!media) {
+    if (!youtube && !media) {
       setError("Scan a page and select a direct public video or audio file first.");
       return;
     }
-    if (media.type !== "video" && media.type !== "audio") {
+    if (!youtube && media.type !== "video" && media.type !== "audio") {
       setError("This source is a playlist or embed, not a direct media file. Protected or player-internal streams are not extracted.");
       return;
     }
 
     try {
-      const parsed = new URL(media.url);
-      if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("Only public HTTP(S) media URLs are supported.");
-
       setLoading(true);
       setProgress(25);
-      setProgressLabel("Starting secure media stream...");
+      setProgressLabel(youtube ? "Starting yt-dlp download..." : "Starting secure media stream...");
+
+      if (youtube) {
+        const audioOnly = format === "MP3";
+        const workerFormat = audioOnly ? "bestaudio" : "best";
+        const downloadUrl = "/api/ytdlp/download?url=" + encodeURIComponent(url.trim())
+          + "&format=" + encodeURIComponent(workerFormat)
+          + "&audio_only=" + String(audioOnly);
+        const anchor = document.createElement("a");
+        anchor.href = downloadUrl;
+        anchor.rel = "noopener";
+        anchor.style.display = "none";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setProgress(100);
+        setProgressLabel("Download request sent");
+        setMessage(audioOnly
+          ? "Your MP3 download has started. Check your browser downloads."
+          : "Your video download has started. Check your browser downloads.");
+        saveHistory({
+          url: url.trim(),
+          title: info?.title || "YouTube video",
+          thumbnail: info?.thumbnail,
+          format: audioOnly ? "MP3" : "MP4",
+          quality: quality,
+          createdAt: new Date().toISOString()
+        });
+        return;
+      }
+
+      const parsed = new URL(media.url);
+      if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("Only public HTTP(S) media URLs are supported.");
       startBrowserDownload(media.url);
       setProgress(100);
       setProgressLabel("Download request sent");
@@ -373,7 +403,7 @@ export default function App() {
                 <TrendingDown className="text-slate-600" size={20} />
               </div>
               {isYouTube(url) && info?.note && (
-                <div className="mt-6 rounded-2xl border border-amber-400/15 bg-amber-400/5 px-4 py-3 text-xs leading-5 text-amber-200">
+                <div className="mt-6 rounded-2xl border border-emerald-400/15 bg-emerald-400/5 px-4 py-3 text-xs leading-5 text-emerald-200">
                   <span className="font-bold">YouTube:</span> {info.note}
                 </div>
               )}
@@ -389,7 +419,7 @@ export default function App() {
                   </select>
                 </label>
               </div>
-              {detectedMedia.length > 0 && (
+              {!isYouTube(url) && detectedMedia.length > 0 && (
                 <div className="mt-6">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Detected media sources</p>
                   <div className="grid gap-2">
@@ -412,9 +442,9 @@ export default function App() {
                   <p className="mt-2 text-[11px] leading-5 text-slate-500">Direct files are downloadable in their original format. STREAM/EMBED entries are detected for visibility but are not extracted or converted.</p>
                 </div>
               )}
-              <button onClick={handleDownload} disabled={loading || !selectedMediaUrl || !detectedMedia.some((item) => item.url === selectedMediaUrl && (item.type === "video" || item.type === "audio"))} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 font-bold transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50">
+              <button onClick={handleDownload} disabled={loading || (isYouTube(url) ? !info?.id : !detectedMedia.some((item) => item.url === selectedMediaUrl && (item.type === "video" || item.type === "audio")))} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 font-bold transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50">
                 {loading ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
-                {loading ? "Starting..." : selectedMediaUrl ? "Download selected media" : "Select direct media to download"}
+                {loading ? "Starting..." : isYouTube(url) ? (format === "MP3" ? "Download MP3" : "Download video") : selectedMediaUrl ? "Download selected media" : "Select direct media to download"}
               </button>
             </div>
           </div>
