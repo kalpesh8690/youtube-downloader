@@ -114,14 +114,21 @@ export default function App() {
 
   useEffect(() => {
     const value = url.trim();
-    if (!value) {
-      inspectAbortRef.current?.abort();
-      setInspectState("idle");
-      return;
-    }
+    inspectAbortRef.current?.abort();
+    setInfo(null);
+    setAvailableFormats([]);
+    setDetectedMedia([]);
+    setSelectedMediaUrl("");
+    setScanMeta({ pagesScanned: 0, count: 0, directCount: 0, streamCount: 0, partial: false });
+    setMessage("");
+    setError("");
+    setInspectState("idle");
+
+    if (!value) return;
     let parsed;
     try { parsed = new URL(value); } catch { return; }
     if (!["http:", "https:"].includes(parsed.protocol)) return;
+
     const timer = setTimeout(() => inspectMediaUrl(value, true), 650);
     return () => {
       clearTimeout(timer);
@@ -258,7 +265,10 @@ export default function App() {
       setLoading(false);
     }
   };
-  const retry = () => submit();
+  const retry = () => {
+    if (inspectState === "error" || (!availableFormats.length && !detectedMedia.length)) submit();
+    else handleDownload();
+  };
 
   const submitNativeDownload = (values) => {
     const form = document.createElement("form");
@@ -310,6 +320,10 @@ export default function App() {
     setError("");
     setMessage("");
 
+    if (workerStatus !== "online") {
+      setError("The Downly worker is offline. Start the Termux worker and retry.");
+      return;
+    }
     const media = detectedMedia.find((item) => item.url === selectedMediaUrl)
       || detectedMedia.find((item) => item.type === "video" || item.type === "audio");
 
@@ -456,7 +470,7 @@ export default function App() {
                 <span className="bg-gradient-to-r from-indigo-300 via-violet-300 to-fuchsia-300 bg-clip-text text-transparent">Your download control.</span>
               </h1>
               <p className="mt-5 max-w-xl text-sm leading-7 text-slate-400 sm:text-base">
-                Paste a public media URL, inspect it, choose the format, and manage the download with live progress, pause, resume and cancellation.
+                Paste a public media URL to inspect its metadata and formats, then send the file straight to Chrome Downloads.
               </p>
               <div className="mt-7 flex flex-wrap gap-2 text-[11px] text-slate-500">
                 <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5" aria-live="polite"><span className={workerStatus==="online" ? "mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" : "mr-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400"}/>{workerStatus==="online" ? "Worker online" : workerStatus==="checking" ? "Checking worker" : "Worker offline"}</span>
@@ -483,7 +497,7 @@ export default function App() {
                     <Clipboard size={14}/> Paste
                   </button>
                 </div>
-                <button onClick={submit} disabled={loading || !url.trim()} className="mt-2 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-white font-bold text-slate-950 transition hover:bg-indigo-50 disabled:cursor-wait disabled:opacity-60">
+                <button onClick={submit} disabled={loading || inspectState==="loading" || !url.trim()} className="mt-2 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-white font-bold text-slate-950 transition hover:bg-indigo-50 disabled:cursor-wait disabled:opacity-60">
                   {loading ? <Loader2 className="animate-spin" size={18}/> : <Download size={18}/>}
                   {loading || inspectState==="loading" ? "Inspecting media..." : inspectState==="ready" ? "Refresh metadata" : "Inspect & continue"} <ArrowRight size={16}/>
                 </button>
