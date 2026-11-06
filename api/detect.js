@@ -9,7 +9,7 @@ const VIDEO_EXTENSIONS = new Set([
   ".mp4", ".m4v", ".m4p", ".mkv", ".webm", ".mov", ".avi",
   ".mpg", ".mpeg", ".mpe", ".m1v", ".m2v", ".vob", ".ts",
   ".mts", ".m2ts", ".3gp", ".3g2", ".flv", ".f4v", ".wmv",
-  ".asf", ".ogv", ".ogg", ".rm", ".rmvb", ".divx", ".mxf"
+  ".asf", ".ogv", ".rm", ".rmvb", ".divx", ".mxf"
 ]);
 const AUDIO_EXTENSIONS = new Set([
   ".mp3", ".m4a", ".m4b", ".m4p", ".aac", ".wav", ".wave",

@@ -14,6 +14,9 @@ const MEDIA_MIME_TYPES = new Set([
   "application/ogg",
   "application/vnd.rn-realmedia",
   "application/x-shockwave-flash",
+  "application/x-msvideo",
+  "application/x-flv",
+  "application/vnd.ms-asf",
   "application/octet-stream",
   "binary/octet-stream",
   "application/x-download"
@@ -54,11 +57,11 @@ function isValidHttpUrl(value) {
   }
 }
 
-function isSupportedMedia(contentType, pathname) {
+function isSupportedMedia(contentType, pathname, upstreamFilename = "") {
   const mime = String(contentType || "").split(";")[0].trim().toLowerCase();
   if (MEDIA_MIME_PREFIXES.some((prefix) => mime.startsWith(prefix))) return true;
   if (!MEDIA_MIME_TYPES.has(mime)) return false;
-  return MEDIA_EXTENSIONS.test(pathname);
+  return MEDIA_EXTENSIONS.test(pathname) || MEDIA_EXTENSIONS.test(upstreamFilename);
 }
 
 function parseUpstreamFilename(disposition) {
@@ -118,7 +121,8 @@ export default async function handler(req, res) {
     try { finalUrl = new URL(result.url); }
     catch { upstream.destroy(); return fail(res, 502, "INVALID_UPSTREAM_URL", "The media host returned an invalid final URL."); }
 
-    if (!isSupportedMedia(contentType, finalUrl.pathname)) {
+    const upstreamName = parseUpstreamFilename(upstream.headers["content-disposition"]);
+    if (!isSupportedMedia(contentType, finalUrl.pathname, upstreamName)) {
       upstream.destroy();
       return fail(res, 415, "NOT_DIRECT_MEDIA", "This URL did not return a supported direct video/audio file. Webpages and HLS/DASH playlists must be scanned first.");
     }
@@ -129,7 +133,6 @@ export default async function handler(req, res) {
       return fail(res, 413, "FILE_TOO_LARGE", "This file exceeds the configured download size limit.");
     }
 
-    const upstreamName = parseUpstreamFilename(upstream.headers["content-disposition"]);
     const pathName = finalUrl.pathname.split("/").filter(Boolean).pop() || "downly-download";
     const filename = safeFilename(body.filename || upstreamName || pathName);
     const asciiFilename = filename.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "_");
