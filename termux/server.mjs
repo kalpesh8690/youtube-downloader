@@ -175,23 +175,35 @@ if(u.pathname==="/api/media/info"&&req.method==="POST"){
     return json(res,422,{ok:false,error:e?.message||"Unable to inspect media URL",code:"MEDIA_INSPECT_ERROR"});
   }
 }
-if(u.pathname==="/api/ytdlp/stream"&&req.method==="GET"){
-  const mediaUrl=u.searchParams.get("url");
+if(u.pathname==="/api/ytdlp/stream"&&(req.method==="GET"||req.method==="POST")){
+  let values;
+  if(req.method==="GET"){
+    values=Object.fromEntries(u.searchParams.entries());
+  }else{
+    let raw="";
+    for await(const chunk of req){
+      raw+=chunk;
+      if(raw.length>32768)return json(res,413,{ok:false,error:"Download request is too large"});
+    }
+    const form=new URLSearchParams(raw);
+    values=Object.fromEntries(form.entries());
+  }
+  const mediaUrl=String(values.url||"").trim();
   if(!mediaUrl)return json(res,400,{ok:false,error:"url is required"});
   if(!rateAllowed(req,"stream",8))return json(res,429,{ok:false,error:"Download start limit reached. Please wait and retry.",code:"RATE_LIMITED"});
   const controller=new AbortController();
   req.on("aborted",()=>controller.abort());
   res.on("close",()=>{if(!res.writableEnded)controller.abort();});
   try{
-    const values={
+    const workerValues={
       url:mediaUrl,
-      direct_url:u.searchParams.get("direct_url")||"",
-      referer:u.searchParams.get("referer")||mediaUrl,
-      format:u.searchParams.get("format")||"best",
-      audio_only:u.searchParams.get("audio_only")==="true"?"true":"false",
-      filename:u.searchParams.get("filename")||""
+      direct_url:String(values.direct_url||""),
+      referer:String(values.referer||mediaUrl),
+      format:String(values.format||"best"),
+      audio_only:values.audio_only==="true"?"true":"false",
+      filename:String(values.filename||"")
     };
-    const upstream=await workerFetch("/v1/stream?"+new URLSearchParams(values).toString(),{method:"GET",signal:controller.signal});
+    const upstream=await workerFetch("/v1/stream?"+new URLSearchParams(workerValues).toString(),{method:"GET",signal:controller.signal});
     const headers={...securityHeaders};
     for(const name of ["content-type","content-disposition","cache-control","accept-ranges","content-length","content-range"]){
       const value=upstream.headers.get(name);if(value)headers[name]=value;
