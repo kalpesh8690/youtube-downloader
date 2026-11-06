@@ -1,4 +1,4 @@
-import {useMemo,useState} from 'react';
+import {useEffect,useMemo,useState} from 'react';
 import {ArrowRight,Check,Download,FileVideo,Globe,History,Link2,Loader2,Menu,Play,ShieldCheck,Sparkles,TrendingDown,X,Zap} from 'lucide-react';
 
 const formats=['MP4','MP3','WEBM'];
@@ -21,8 +21,8 @@ export default function App(){
  const[loading,setLoading]=useState(false);
  const[open,setOpen]=useState(false);
  const[message,setMessage]=useState('');
- const[info,setInfo]=useState(null);
- const valid=useMemo(()=>isYouTube(url),[url]);
+ const[info,setInfo]=useState(null);\n const[progress,setProgress]=useState(0);\n const[progressLabel,setProgressLabel]=useState('Ready');\n const[history,setHistory]=useState([]);
+ const valid=useMemo(()=>isYouTube(url),[url]);\n\n useEffect(()=>{\n  try{setHistory(JSON.parse(localStorage.getItem('downly-history')||'[]'))}catch{setHistory([])}\n },[]);\n\n const saveHistory=(item)=>{\n  const next=[item,...history.filter(x=>x.url!==item.url)].slice(0,10);\n  setHistory(next);\n  try{localStorage.setItem('downly-history',JSON.stringify(next))}catch{}\n };
 
  const submit=async()=>{
   setMessage('');
@@ -32,8 +32,8 @@ export default function App(){
    const r=await fetch('/api/youtube/info',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
    const data=await r.json();
    if(!r.ok) throw new Error(data.error||'Unable to fetch video information');
-   setInfo(data); setMessage('Video found. Media downloading is limited to content you own or are authorized to download.');
-  }catch(e){setInfo(null);setMessage(e.message)}finally{setLoading(false)}
+   setInfo(data);\n   setProgress(100);\n   setProgressLabel('Complete');\n   setMessage('Video information loaded. Media downloading is limited to content you own or are authorized to download.');\n   saveHistory({url,title:data.title||'Untitled video',thumbnail:data.thumbnail,format,quality,createdAt:new Date().toISOString()});
+  }catch(e){setInfo(null);setProgress(0);setProgressLabel('Failed');setMessage(e.message)}finally{setLoading(false)}
  };
 
  return <div className="min-h-screen overflow-hidden bg-[#070b14]">
@@ -62,7 +62,7 @@ export default function App(){
       <div className="relative flex min-w-0 flex-1 items-center"><Link2 className="absolute left-4 text-slate-500" size={19}/><input value={url} onChange={e=>setUrl(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()} placeholder="Paste YouTube URL here..." className="h-14 w-full rounded-2xl border border-white/10 bg-black/20 pl-12 pr-4 text-sm text-white outline-none placeholder:text-slate-600 focus:border-indigo-400/50 focus:ring-4 focus:ring-indigo-500/10"/></div>
       <button onClick={submit} disabled={loading} className="group flex h-14 items-center justify-center gap-2 rounded-2xl bg-white px-6 font-bold text-slate-950 transition hover:bg-indigo-50 disabled:cursor-wait disabled:opacity-70">{loading?<Loader2 className="animate-spin" size={19}/>:<Download size={19}/>} {loading?'Checking...':'Download'}<ArrowRight className="transition group-hover:translate-x-1" size={17}/></button>
      </div>
-     {message&&<div className="px-3 pb-1 pt-3 text-left text-sm text-indigo-200">{message}</div>}
+     {(loading||progress>0)&&<div className="px-3 pb-1 pt-4 text-left">\n      <div className="mb-2 flex items-center justify-between text-xs">\n       <span className="text-slate-400">{progressLabel}</span>\n       <span className="font-bold text-indigo-200">{progress}%</span>\n      </div>\n      <div className="h-2 overflow-hidden rounded-full bg-white/10" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progress}>\n       <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 transition-all duration-500" style={{width:`${progress}%`}}/>\n      </div>\n     </div>}\n     {message&&<div className="px-3 pb-1 pt-3 text-left text-sm text-indigo-200">{message}</div>}
     </div>
 
     <div className="mt-5 flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs text-slate-500"><span className="flex items-center gap-1.5"><ShieldCheck size={14}/> Secure processing</span><span className="flex items-center gap-1.5"><Zap size={14}/> Fast workflow</span><span className="flex items-center gap-1.5"><Globe size={14}/> Cross-device</span></div>
