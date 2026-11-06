@@ -189,9 +189,7 @@ export default function App() {
       setSelectedMediaUrl(firstDirect?.url || "");
       setProgress(100);
       setProgressLabel("Ready");
-      setMessage(media.length
-        ? \`Detected \${media.length} public media source(s). Select a direct audio/video file below to download.\`
-        : "No public direct media file was exposed by this webpage.");
+      setMessage(media.length ? "Detected " + media.length + " public media source(s). Select a direct audio/video file below to download." : "No public direct media file was exposed by this webpage.");
     } catch (e) {
       setProgress(0);
       setProgressLabel("Ready");
