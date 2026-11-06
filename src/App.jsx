@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   AlertCircle, ArrowRight, Check, Clipboard, Download, FileVideo, Globe, History,
   Link2, Loader2, Menu, Play, RefreshCw, ShieldCheck, Sparkles,
-  TrendingDown, X, Zap, Trash2, Gauge
+  TrendingDown, X, Zap, Trash2
 } from "lucide-react";
 
 const outputModes = ["MP4", "MP3"];
@@ -252,6 +252,17 @@ export default function App() {
     const value = url.trim();
     if (!value) {
       setError("Paste a video or media URL first.");
+      return;
+    }
+    let parsed;
+    try {
+      parsed = new URL(value);
+    } catch {
+      setError("Enter a complete URL starting with https:// or http://.");
+      return;
+    }
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      setError("Only public HTTP(S) URLs are supported.");
       return;
     }
     setLoading(true);
