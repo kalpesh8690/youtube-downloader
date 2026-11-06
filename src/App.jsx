@@ -5,8 +5,7 @@ import {
   TrendingDown, X, Zap, Gauge, Clock3, Trash2
 } from "lucide-react";
 
-const formats = ["Original", "MP4", "MP3"];
-const qualities = ["Source", "Best available"];
+const outputModes = ["MP4", "MP3"];
 const features = [
   ["Lightning fast", "A clean workflow designed to minimize clicks.", Zap],
   ["Direct media", "Download public direct video and audio files you are authorized to save.", FileVideo],
@@ -98,8 +97,11 @@ function saveBlob(blob, filename) {
 
 export default function App() {
   const [url, setUrl] = useState("");
-  const [quality, setQuality] = useState("Source");
-  const [format, setFormat] = useState("Original");
+  const [quality, setQuality] = useState("best");
+  const [format, setFormat] = useState("MP4");
+  const [availableFormats, setAvailableFormats] = useState([]);
+  const [inspectState, setInspectState] = useState("idle");
+  const inspectAbortRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
@@ -128,99 +130,127 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    const value = url.trim();
+    if (!value) {
+      inspectAbortRef.current?.abort();
+      setInspectState("idle");
+      return;
+    }
+    let parsed;
+    try { parsed = new URL(value); } catch { return; }
+    if (!["http:", "https:"].includes(parsed.protocol)) return;
+    const timer = setTimeout(() => inspectMediaUrl(value, true), 650);
+    return () => clearTimeout(timer);
+  }, [url]);
+
   const saveHistory = (item) => {
     const next = [item, ...history.filter((x) => x.url !== item.url)].slice(0, 10);
     setHistory(next);
     try { localStorage.setItem("downly-history", JSON.stringify(next)); } catch {}
   };
 
+  const inspectMediaUrl = async (input, automatic = false) => {
+    const value = String(input || "").trim();
+    if (!value) return null;
+    let parsed;
+    try { parsed = new URL(value); } catch { return null; }
+    if (!["http:", "https:"].includes(parsed.protocol)) return null;
+
+    inspectAbortRef.current?.abort();
+    const controller = new AbortController();
+    inspectAbortRef.current = controller;
+    setInspectState("loading");
+    setError("");
+    if (!automatic) setMessage("");
+
+    try {
+      const response = await fetch("/api/media/info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ url: value }),
+        signal: controller.signal
+      });
+      const data = await response.json().catch(() => null);
+
+      if (response.ok && data?.ok && Array.isArray(data.formats) && data.formats.length) {
+        setInfo(data);
+        setAvailableFormats(data.formats);
+        const firstVideo = data.formats.find((x) => x.hasVideo) || data.formats[0];
+        setFormat(firstVideo?.hasVideo ? "MP4" : "MP3");
+        setQuality(firstVideo?.id || "best");
+        setDetectedMedia([]);
+        setSelectedMediaUrl("");
+        setScanMeta({ pagesScanned: 1, count: data.formats.length, directCount: data.formats.length, streamCount: 0, partial: false });
+        setProgress(100);
+        setProgressLabel("Media details ready");
+        setInspectState("ready");
+        setMessage((data.title ? "Ready: " + data.title : "Media details loaded.") + " · " + data.formats.length + " formats available.");
+        return data;
+      }
+
+      if (response.ok && data?.ok) {
+        setInfo(data);
+        setAvailableFormats([]);
+        setInspectState("ready");
+      }
+
+      const detectResponse = await fetch("/api/detect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ url: value }),
+        signal: controller.signal
+      });
+      const detect = await detectResponse.json().catch(() => null);
+      if (!detectResponse.ok || !detect?.ok) throw new Error(data?.error || detect?.error || "No downloadable media was found.");
+
+      const media = Array.isArray(detect.media) ? detect.media.filter((item) => item?.url) : [];
+      setInfo((prev) => prev || { title: detect.title || safeHostname(value), author: safeHostname(value), thumbnail: null });
+      setAvailableFormats([]);
+      setDetectedMedia(media);
+      const firstDirect = media.find((item) => item.type === "video" || item.type === "audio");
+      setSelectedMediaUrl(firstDirect?.url || "");
+      setScanMeta({
+        pagesScanned: Number(detect.pagesScanned) || 1,
+        count: Number(detect.count) || media.length,
+        directCount: Number(detect.directCount) || media.filter((item) => item.type === "video" || item.type === "audio").length,
+        streamCount: Number(detect.streamCount) || media.filter((item) => item.type === "stream").length,
+        partial: Boolean(detect.partial)
+      });
+      setProgress(100);
+      setProgressLabel("Media scan ready");
+      setInspectState("ready");
+      setMessage(media.length ? "Found " + media.length + " media source(s). Select a direct file to download." : "No downloadable media was found.");
+      return detect;
+    } catch (e) {
+      if (e?.name === "AbortError") return null;
+      setInspectState("error");
+      setProgress(0);
+      setProgressLabel("Inspection failed");
+      setError(friendlyError(e?.message, 422));
+      return null;
+    }
+  };
+
+
+
   const submit = async () => {
     const value = url.trim();
     if (!value) {
-      setError("Paste a webpage or direct media URL first.");
+      setError("Paste a video or media URL first.");
       return;
     }
-
-    let parsed;
-    try {
-      parsed = new URL(value);
-    } catch {
-      setError("Enter a complete URL starting with http:// or https://.");
-      return;
-    }
-    if (!["http:", "https:"].includes(parsed.protocol)) {
-      setError("Only HTTP(S) URLs are supported.");
-      return;
-    }
-
     setLoading(true);
     setError("");
     setMessage("");
-    setInfo(null);
-    setDetectedMedia([]);
-    setSelectedMediaUrl("");
-    setScanMeta({ pagesScanned: 0, count: 0, directCount: 0, streamCount: 0, partial: false });
-    setProgress(10);
-    setProgressLabel("Inspecting URL...");
-
+    setProgress(15);
+    setProgressLabel("Inspecting media...");
     try {
-      if (isYouTube(value)) {
-        setProgress(35);
-        setProgressLabel("Loading video details...");
-        const response = await fetch("/api/youtube/info", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ url: value })
-        });
-        const data = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(friendlyError(data?.error, response.status));
-        if (!data || data.ok !== true) throw new Error(data?.error || "The video details API returned an invalid response.");
-        setInfo(data);
-        setScanMeta({ pagesScanned: 1, count: 0, directCount: 0, streamCount: 0, partial: false });
-        setProgress(100);
-        setProgressLabel("Details loaded");
-        setMessage(data.note || "Video details loaded. Protected YouTube media streams are not extracted.");
-        return;
-      }
-
-      setProgress(35);
-      setProgressLabel("Finding public media...");
-      const response = await fetch("/api/detect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ url: value })
-      });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(friendlyError(data?.error, response.status));
-      if (!data || data.ok !== true) throw new Error(data?.error || "The media detector returned an invalid response.");
-
-      const media = Array.isArray(data.media)
-        ? data.media.filter((item) => item && typeof item.url === "string" && ["video", "audio", "stream", "embed", "unknown"].includes(item.type))
-        : [];
-      setInfo({ title: data.title || safeHostname(data.pageUrl || value), author: safeHostname(data.pageUrl || value), thumbnail: null });
-      setDetectedMedia(media);
-      setScanMeta({
-        pagesScanned: Number(data.pagesScanned) || 1,
-        count: Number(data.count) || media.length,
-        directCount: Number(data.directCount) || media.filter((item) => item.type === "video" || item.type === "audio").length,
-        streamCount: Number(data.streamCount) || media.filter((item) => item.type === "stream").length,
-        partial: Boolean(data.partial)
-      });
-      const firstDirect = media.find((item) => item.type === "video" || item.type === "audio");
-      setSelectedMediaUrl(firstDirect?.url || "");
-      setProgress(100);
-      setProgressLabel("Ready");
-      setMessage(media.length ? "Found " + media.length + " media source(s) across " + (data.pagesScanned || 1) + " page(s). Direct files can be streamed; playlist/embed sources may require a supported player." : "No public direct media files were found in the pages scanned (" + (data.pagesScanned || 1) + ").");
-    } catch (e) {
-      setProgress(0);
-      setProgressLabel("Ready");
-      setProgress(0);
-      setError(e?.message || "Unable to inspect this URL.");
+      await inspectMediaUrl(value, false);
     } finally {
       setLoading(false);
     }
   };
-
   const retry = () => submit();
 
   const pasteFromClipboard = async () => {
@@ -372,17 +402,27 @@ export default function App() {
   };
 
   const startBrowserTransfer = async (jobId, status, audioOnly) => {
-    const fileHead = await fetch("/api/ytdlp/jobs/" + jobId + "/file", { method: "HEAD", cache: "no-store" });
-    if (!fileHead.ok) throw new Error("Unable to read generated file metadata.");
-    const total = Number(fileHead.headers.get("content-length")) || Number(status.sizeBytes) || Number(status.totalBytes) || 0;
-    if (!total) throw new Error("File size is unavailable; resumable mode cannot start.");
+    const total = Number(status.sizeBytes || status.totalBytes || 0);
     const filename = status.filename || "downly-download." + (status.extension || (audioOnly ? "mp3" : "mp4"));
-    const mime = fileHead.headers.get("content-type") || status.mime || "application/octet-stream";
+    const mime = status.mime || "application/octet-stream";
     setDownloadMeta({ ...status, total, sizeBytes: total, filename, mime, extension: status.extension || filename.split(".").pop() });
-    setProgress(0);
+    setProgress(100);
+    setProgressLabel("Ready · sending to Chrome Downloads");
+    setDownloadSpeed(0);
+    setDownloadEta(0);
     setTransferState("downloading");
-    downloadSessionRef.current = { jobId, filename, mime, total, chunks: [], nextStart: 0, controller: null };
-    await runIdmDownload(jobId, filename, mime, total, 0);
+    const anchor = document.createElement("a");
+    anchor.href = "/api/ytdlp/jobs/" + jobId + "/file";
+    anchor.download = filename;
+    anchor.rel = "noopener";
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTransferState("complete");
+    setLoading(false);
+    setMessage("Download started in Chrome Downloads · " + filename);
+    downloadSessionRef.current = null;
     return { filename, total };
   };
 
@@ -462,33 +502,28 @@ export default function App() {
     const media = detectedMedia.find((item) => item.url === selectedMediaUrl)
       || detectedMedia.find((item) => item.type === "video" || item.type === "audio");
 
-    if (!youtube && !media) {
-      setError("Scan a page and select a direct public video or audio file first.");
+    if (!availableFormats.length && !media) {
+      setError("Inspect the URL first. No downloadable format is available.");
       return;
     }
-    if (!youtube && media.type !== "video" && media.type !== "audio") {
-      setError("This source is a playlist or embed, not a direct media file. Protected or player-internal streams are not extracted.");
+    if (!youtube && !availableFormats.length && media && media.type !== "video" && media.type !== "audio") {
+      setError("This source is an embed or stream page, not a direct downloadable media file.");
       return;
     }
 
     try {
       setLoading(true);
-      setProgress(25);
-      setProgressLabel(youtube ? "Starting yt-dlp download..." : "Starting secure media stream...");
+      setError("");
+      setProgress(5);
+      setTransferState("preparing");
+      setProgressLabel("Creating download job...");
 
-      if (youtube) {
+      if (availableFormats.length) {
         const audioOnly = format === "MP3";
-        const workerFormat = audioOnly ? "bestaudio" : "best";
-
-        if (activeJobRef.current && transferState === "paused") {
-          await resumeDownload();
-          return;
-        }
-
-        setProgress(5);
-        setProgressLabel("Creating IDM download job...");
-        setTransferState("preparing");
-
+        const selected = availableFormats.find((x) => x.id === quality && (audioOnly ? x.hasAudio : x.hasVideo))
+          || availableFormats.find((x) => audioOnly ? x.hasAudio : x.hasVideo)
+          || availableFormats[0];
+        const workerFormat = audioOnly ? "bestaudio" : (selected?.selector || "bv*+ba/b");
         const jobResponse = await fetch("/api/ytdlp/jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -501,29 +536,31 @@ export default function App() {
         activeJobRef.current = { jobId };
         const status = await waitForWorkerReady(jobId);
         const result = await startBrowserTransfer(jobId, status, audioOnly);
-        saveHistory({url:url.trim(),title:info?.title||"YouTube video",thumbnail:info?.thumbnail,format:audioOnly?"MP3":"MP4",quality,createdAt:new Date().toISOString(),resumable:true,jobId,filename:result.filename,sizeBytes:result.total});
+        saveHistory({ url: url.trim(), title: info?.title || "Media download", thumbnail: info?.thumbnail, format: audioOnly ? "MP3" : "MP4", quality: selected?.label || "Best", createdAt: new Date().toISOString(), resumable: true, jobId, filename: result.filename, sizeBytes: result.total });
         return;
       }
 
       const parsed = new URL(media.url);
       if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("Only public HTTP(S) media URLs are supported.");
-      startBrowserDownload(media.url);
+      const anchor = document.createElement("a");
+      anchor.href = media.url;
+      anchor.download = "";
+      anchor.rel = "noopener";
+      anchor.target = "_blank";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
       setProgress(100);
-      setProgressLabel("Download request sent");
-      setMessage("Your browser has been sent a streamed download. Large files are not buffered inside the app; check your browser downloads.");
-      saveHistory({
-        url: media.url,
-        title: info?.title || "Downloaded media",
-        thumbnail: info?.thumbnail,
-        format: "Original",
-        quality: "Source",
-        createdAt: new Date().toISOString()
-      });
+      setTransferState("complete");
+      setLoading(false);
+      setProgressLabel("Download sent to browser");
+      setMessage("Download request sent to Chrome. Check your Downloads.");
+      saveHistory({ url: media.url, title: info?.title || "Downloaded media", thumbnail: info?.thumbnail, format: mediaLabel(media), quality: "Source", createdAt: new Date().toISOString() });
     } catch (e) {
       setProgress(0);
+      setTransferState("error");
       setProgressLabel("Download failed");
       setError(e?.message || "Unable to start this download.");
-    } finally {
       setLoading(false);
     }
   };
@@ -688,16 +725,37 @@ export default function App() {
               )}
               <div className="mt-7 grid gap-4 sm:grid-cols-2">
                 <label className="block text-xs font-semibold text-slate-400">FORMAT
-                  <select value={format} onChange={(e) => setFormat(e.target.value)} className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-white outline-none focus:border-indigo-400/50">
-                    {formats.map((x) => <option key={x}>{x}</option>)}
+                  <select value={format} onChange={(e) => {
+                    const next=e.target.value;
+                    setFormat(next);
+                    const first=availableFormats.find((x) => next==="MP3" ? x.hasAudio : x.hasVideo);
+                    if(first) setQuality(first.id);
+                  }} disabled={!availableFormats.length} className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-white outline-none focus:border-indigo-400/50 disabled:opacity-40">
+                    {outputModes.map((x) => <option key={x}>{x}</option>)}
                   </select>
                 </label>
-                <label className="block text-xs font-semibold text-slate-400">QUALITY
-                  <select value={quality} onChange={(e) => setQuality(e.target.value)} className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-white outline-none focus:border-indigo-400/50">
-                    {qualities.map((x) => <option key={x}>{x}</option>)}
+                <label className="block text-xs font-semibold text-slate-400">QUALITY / SOURCE
+                  <select value={quality} onChange={(e) => setQuality(e.target.value)} disabled={!availableFormats.length} className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-white outline-none focus:border-indigo-400/50 disabled:opacity-40">
+                    {availableFormats.filter((x) => format === "MP3" ? x.hasAudio : x.hasVideo).slice(0,80).map((x) => <option key={x.id} value={x.id}>{x.label}{x.filesize ? " · " + formatBytes(Number(x.filesize)) : ""}</option>)}
                   </select>
                 </label>
               </div>
+              {availableFormats.length > 0 && (
+                <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Available formats</span>
+                    <span className="text-[11px] text-slate-600">{availableFormats.length} detected</span>
+                  </div>
+                  <div className="max-h-52 space-y-1 overflow-auto pr-1">
+                    {availableFormats.slice(0,80).map((x) => (
+                      <button key={x.id} type="button" onClick={() => {setQuality(x.id);setFormat(x.hasVideo ? "MP4" : "MP3");}} className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition ${quality===x.id ? "bg-indigo-500/15 text-indigo-100" : "text-slate-400 hover:bg-white/5"}`}>
+                        <span className="truncate">{x.label}</span>
+                        <span className="ml-3 shrink-0 text-slate-600">{x.id}{x.filesize ? " · "+formatBytes(Number(x.filesize)) : ""}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {!isYouTube(url) && detectedMedia.length > 0 && (
                 <div className="mt-6">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Detected media sources</p>
@@ -718,12 +776,12 @@ export default function App() {
                       );
                     })}
                   </div>
-                  <p className="mt-2 text-[11px] leading-5 text-slate-500">Direct files are downloadable in their original format. STREAM/EMBED entries are detected for visibility but are not extracted or converted.</p>
+                  <p className="mt-2 text-[11px] leading-5 text-slate-500">Downloads are handed to the browser's native Downloads manager. The worker prepares the media; Chrome handles the actual file transfer.</p>
                 </div>
               )}
-              <button onClick={handleDownload} disabled={loading || (isYouTube(url) ? (!info?.id || transferState === "downloading") : !detectedMedia.some((item) => item.url === selectedMediaUrl && (item.type === "video" || item.type === "audio")))} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 font-bold transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50">
+              <button onClick={handleDownload} disabled={loading || (!availableFormats.length && !detectedMedia.some((item) => item.url === selectedMediaUrl && (item.type === "video" || item.type === "audio")))} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 font-bold transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50">
                 {loading ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
-                {loading ? "Preparing..." : isYouTube(url) && transferState === "paused" ? "Resume download" : isYouTube(url) ? (format === "MP3" ? "Download MP3" : "Download video") : selectedMediaUrl ? "Download selected media" : "Select direct media to download"}
+                {loading ? "Preparing..." : availableFormats.length ? (format === "MP3" ? "Download MP3" : "Download " + (availableFormats.find((x) => x.id === quality)?.label || "selected video")) : selectedMediaUrl ? "Download selected media" : "Inspect media first"}
               </button>
             </div>
           </div>
