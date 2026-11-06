@@ -45,6 +45,17 @@ async function readJsonBody(req, maxBytes=32768) {
 
 
 function json(res,status,body){if(res.headersSent){res.destroy();return;}const data=JSON.stringify(body);res.writeHead(status,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store",...securityHeaders});res.end(data);}
+function escapeHtml(value){
+  return String(value||"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+}
+function downloadError(req,res,status,message){
+  const safeMessage=escapeHtml(message||"The media source could not start a download. Please check the link and retry.");
+  if(!String(req.headers.accept||"").includes("text/html"))return json(res,status,{ok:false,error:message||"Download could not start",code:"DOWNLOAD_START_ERROR"});
+  const html=`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#070b14"><title>Download could not start · Downly</title></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#060914;color:#f8fafc;font-family:system-ui,-apple-system,Segoe UI,sans-serif;padding:24px;box-sizing:border-box"><main style="width:100%;max-width:440px;border:1px solid #334155;border-radius:24px;background:#111827;padding:28px;box-sizing:border-box"><div style="color:#fda4af;font-size:12px;font-weight:700;letter-spacing:.15em;text-transform:uppercase">Downly · Download error</div><h1 style="font-size:26px;margin:14px 0 8px">Download could not start</h1><p style="color:#cbd5e1;line-height:1.6;margin:0">${safeMessage}</p><a href="/" style="display:inline-flex;margin-top:24px;padding:12px 18px;border-radius:12px;background:#fff;color:#0f172a;text-decoration:none;font-weight:700">Return to Downly</a><p style="color:#64748b;font-size:12px;margin:20px 0 0">Try inspecting the link again or choose another available format.</p></main></body></html>`;
+  if(res.headersSent){res.destroy();return;}
+  res.writeHead(status,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store",...securityHeaders});
+  res.end(html);
+}
 function youtubeId(input){try{const u=new URL(String(input||""));const h=u.hostname.toLowerCase();if(!["youtube.com","www.youtube.com","m.youtube.com","youtu.be","www.youtu.be"].includes(h))return null;if(h.includes("youtu.be"))return u.pathname.split("/").filter(Boolean)[0]||null;if(u.pathname==="/watch")return u.searchParams.get("v");return u.pathname.match(/^\/(shorts|embed|live)\/([^/?#]+)/)?.[2]||null;}catch{return null;}}
 async function youtubeInfo(url){const id=youtubeId(url);if(!id)return{status:400,body:{ok:false,error:"Valid YouTube URL required",code:"INVALID_URL"}};const canonical="https://www.youtube.com/watch?v="+encodeURIComponent(id);const r=await fetch("https://www.youtube.com/oembed?url="+encodeURIComponent(canonical)+"&format=json");if(r.status===404)return{status:404,body:{ok:false,error:"Video information unavailable",code:"VIDEO_NOT_FOUND",id}};if(!r.ok)return{status:502,body:{ok:false,error:"YouTube metadata service returned an error",code:"UPSTREAM_ERROR",id}};const d=await r.json();return{status:200,body:{ok:true,id,title:d.title,author:d.author_name,thumbnail:"https://i.ytimg.com/vi/"+id+"/hqdefault.jpg",watchUrl:canonical,formats:[{format:"MP4",quality:"Best available",available:true},{format:"MP3",quality:"Audio",available:true}],note:"Downloads are handled by your local Termux yt-dlp worker."}};}
 
@@ -157,8 +168,8 @@ if(u.pathname==="/api/ytdlp/stream"&&(req.method==="GET"||req.method==="POST")){
     values=Object.fromEntries(form.entries());
   }
   const mediaUrl=String(values.url||"").trim();
-  if(!mediaUrl)return json(res,400,{ok:false,error:"url is required"});
-  if(!rateAllowed(req,"stream",8))return json(res,429,{ok:false,error:"Download start limit reached. Please wait and retry.",code:"RATE_LIMITED"});
+  if(!mediaUrl)return downloadError(req,res,400,"Paste a media URL into Downly and try again.");
+  if(!rateAllowed(req,"stream",8))return downloadError(req,res,429,"Too many download requests. Wait a minute and try again.");
   const controller=new AbortController();
   req.on("aborted",()=>controller.abort());
   res.on("close",()=>{if(!res.writableEnded)controller.abort();});
@@ -175,6 +186,10 @@ if(u.pathname==="/api/ytdlp/stream"&&(req.method==="GET"||req.method==="POST")){
       ...workerValues,
       audio_only:workerValues.audio_only==="true"
     }),signal:controller.signal});
+    if(!upstream.ok){
+      const failure=await upstream.json().catch(()=>null);
+      return downloadError(req,res,upstream.status,failure?.error||"The media source rejected the download request.");
+    }
     const headers={...securityHeaders};
     for(const name of ["content-type","content-disposition","cache-control","accept-ranges","content-length","content-range"]){
       const value=upstream.headers.get(name);if(value)headers[name]=value;
@@ -196,7 +211,7 @@ if(u.pathname==="/api/ytdlp/stream"&&(req.method==="GET"||req.method==="POST")){
   }catch(e){
     if(controller.signal.aborted)return;
     console.error("[stream-proxy] "+(e?.message||"stream failed"));
-    if(!res.headersSent)return json(res,502,{ok:false,error:"Direct download stream unavailable",code:"STREAM_PROXY_ERROR"});
+    if(!res.headersSent)return downloadError(req,res,502,"The media stream is unavailable. Inspect the link again or choose another format.");
     res.destroy();
   }
 }
