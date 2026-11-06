@@ -54,15 +54,46 @@ function friendlyError(error, status) {
 }
 
 
-function startBrowserDownload(mediaUrl) {
-  const downloadUrl = "/api/download?url=" + encodeURIComponent(mediaUrl);
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return (bytes / Math.pow(1024, i)).toFixed(i ? 1 : 0) + " " + units[i];
+}
+
+async function downloadWithProgress(downloadUrl, onProgress) {
+  const response = await fetch(downloadUrl);
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.error || "Download server returned HTTP " + response.status);
+  }
+  if (!response.body) throw new Error("Streaming download is not supported by this browser.");
+  const total = Number(response.headers.get("content-length")) || 0;
+  let received = 0;
+  const chunks = [];
+  const reader = response.body.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.byteLength;
+    onProgress(received, total);
+  }
+  const type = response.headers.get("content-type") || "application/octet-stream";
+  const disposition = response.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  return { blob: new Blob(chunks, { type }), filename: match?.[1] || "downly-download" };
+}
+
+function saveBlob(blob, filename) {
+  const href = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
-  anchor.href = downloadUrl;
-  anchor.rel = "noopener";
-  anchor.style.display = "none";
+  anchor.href = href;
+  anchor.download = filename;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 60_000);
 }
 
 export default function App() {
@@ -214,26 +245,18 @@ export default function App() {
         const downloadUrl = "/api/ytdlp/download?url=" + encodeURIComponent(url.trim())
           + "&format=" + encodeURIComponent(workerFormat)
           + "&audio_only=" + String(audioOnly);
-        const anchor = document.createElement("a");
-        anchor.href = downloadUrl;
-        anchor.rel = "noopener";
-        anchor.style.display = "none";
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        setProgress(100);
-        setProgressLabel("Download request sent");
-        setMessage(audioOnly
-          ? "Your MP3 download has started. Check your browser downloads."
-          : "Your video download has started. Check your browser downloads.");
-        saveHistory({
-          url: url.trim(),
-          title: info?.title || "YouTube video",
-          thumbnail: info?.thumbnail,
-          format: audioOnly ? "MP3" : "MP4",
-          quality: quality,
-          createdAt: new Date().toISOString()
+        setProgress(8);
+        setProgressLabel("yt-dlp is preparing your file...");
+        const result = await downloadWithProgress(downloadUrl, (received, total) => {
+          const pct = total > 0 ? Math.min(99, Math.round((received / total) * 100)) : Math.min(95, progress + 1);
+          setProgress(pct);
+          setProgressLabel(total ? "Downloading " + formatBytes(received) + " / " + formatBytes(total) : "Downloading " + formatBytes(received));
         });
+        saveBlob(result.blob, result.filename);
+        setProgress(100);
+        setProgressLabel("Download complete");
+        setMessage("Download complete — " + result.filename);
+        saveHistory({url:url.trim(),title:info?.title||"YouTube video",thumbnail:info?.thumbnail,format:audioOnly?"MP3":"MP4",quality,createdAt:new Date().toISOString()});
         return;
       }
 
