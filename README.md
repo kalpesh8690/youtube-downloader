@@ -102,7 +102,7 @@ For remote access, use a named Cloudflare Tunnel and protect it with Cloudflare 
 | GET /api/media/crawl | GET /v1/crawl | bounded media crawler |
 | POST/GET /api/detect | GET /v1/crawl | legacy-compatible crawler response |
 | GET /api/health | GET /health | worker health |
-| POST /api/ytdlp/stream | GET /v1/stream | native browser attachment stream |
+| POST /api/ytdlp/stream | POST /v1/stream | native browser attachment stream; source URLs stay out of request query strings |
 | POST /api/ytdlp/jobs | POST /v1/jobs | persistent job creation |
 | GET /api/ytdlp/jobs/:id | GET /v1/jobs/:id | persistent job status |
 | POST /api/ytdlp/jobs/:id/pause | POST /v1/jobs/:id/pause | pause persistent job |
