@@ -81,14 +81,21 @@ if(statusMatch&&req.method==="GET"){
   return json(res,upstream.status,data||{ok:upstream.ok});
 }
 const fileMatch=u.pathname.match(/^\/api\/ytdlp\/jobs\/([a-f0-9]+)\/file$/);if(fileMatch&&(req.method==="GET"||req.method==="HEAD")){
-  const meta=enrichMeta(await readMeta(fileMatch[1]));
-  if(!meta)return json(res,404,{ok:false,error:"Download job not found"});
-  if(meta.status!=="ready")return json(res,409,{ok:false,error:"Download is not ready",status:meta.status,bytes:meta.bytes,total:meta.total});
-  const file=path.join(STORE,fileMatch[1],meta.filename);
-  const st=await fs.stat(file);
-  const headers={"Content-Type":meta.mime||"application/octet-stream","Content-Disposition":'attachment; filename="'+meta.filename.replace(/"/g,"")+'"',"Accept-Ranges":"bytes","Cache-Control":"no-store","Content-Length":String(st.size),"X-Downly-Extension":meta.extension||"","X-Downly-Size":String(st.size)};
-  if(req.method==="HEAD"){res.writeHead(200,headers);return res.end();}
-  return serveJobFile(req,res,fileMatch[1]);
+  const jobId=fileMatch[1];
+  try {
+    const upstream=await workerFetch("/v1/jobs/"+jobId+"/file",{method:req.method,headers:req.headers.range?{Range:req.headers.range}:{}});
+    const headers={};
+    for(const name of ["content-type","content-disposition","accept-ranges","content-length","content-range","cache-control","x-downly-extension","x-downly-size"]){
+      const value=upstream.headers.get(name); if(value) headers[name]=value;
+    }
+    res.writeHead(upstream.status,headers);
+    if(req.method==="HEAD" || !upstream.body) return res.end();
+    for await(const chunk of upstream.body) res.write(Buffer.from(chunk));
+    return res.end();
+  } catch(e) {
+    console.error("[file-proxy] job="+jobId+" error="+(e?.stack||e));
+    return json(res,502,{ok:false,error:"Worker file service unavailable",code:"WORKER_FILE_PROXY_ERROR",jobId});
+  }
 }
 if(u.pathname==="/api/ytdlp/download"&&(req.method==="GET"||req.method==="POST")){
   let body;
@@ -99,6 +106,6 @@ if(u.pathname==="/api/ytdlp/download"&&(req.method==="GET"||req.method==="POST")
   return json(res,202,{ok:true,...job});
 }
 if(u.pathname==="/api/youtube/info"&&(req.method==="GET"||req.method==="POST")){if(req.method==="GET"){const r=await youtubeInfo(u.searchParams.get("url"));return json(res,r.status,r.body);}let raw="";for await(const c of req)raw+=c;let body;try{body=JSON.parse(raw)}catch{return json(res,400,{ok:false,error:"Invalid JSON body"})}const r=await youtubeInfo(body?.url);return json(res,r.status,r.body);}
-return staticFile(req,res);}catch(e){json(res,502,{ok:false,error:e?.message||"Termux server error"});}});
+return staticFile(req,res);}catch(e){console.error("[api-error]",req.method,req.url,e?.stack||e);json(res,502,{ok:false,error:e?.message||"Termux server error",code:"TERMUX_API_ERROR"});}});
 async function workerDownloadLegacy(res,body){if(!WORKER_TOKEN)return json(res,503,{ok:false,error:"YTDLP_WORKER_TOKEN is not configured"});const upstream=await fetch(WORKER_URL+"/v1/media/download",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+WORKER_TOKEN},body:JSON.stringify(body)});const headers={"Content-Type":upstream.headers.get("content-type")||"application/octet-stream","Cache-Control":"no-store"};for(const h of ["content-disposition","content-length"])if(upstream.headers.get(h))headers[h[0].toUpperCase()+h.slice(1)]=upstream.headers.get(h);res.writeHead(upstream.status,headers);if(!upstream.body)return res.end();for await(const chunk of upstream.body)res.write(Buffer.from(chunk));res.end();}
-server.listen(PORT,HOST,()=>console.log("Downly Termux frontend: http://127.0.0.1:"+PORT+" | worker: "+WORKER_URL+" | resumable downloads enabled"));
+server.listen(PORT,HOST,()=>console.log("[startup] Downly Termux frontend http://127.0.0.1:"+PORT+" | worker="+WORKER_URL+" | token="+(WORKER_TOKEN?"configured":"MISSING")+" | resumable=true"));
