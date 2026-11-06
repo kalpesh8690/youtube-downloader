@@ -24,7 +24,7 @@ async function startJob(body){
   const dir=path.join(STORE,id);
   await fs.mkdir(dir,{recursive:true});
   const metaPath=path.join(dir,"meta.json");
-  await fs.writeFile(metaPath,JSON.stringify({id,status:"preparing",url:body.url,format:body.format||"best",audio_only:Boolean(body.audio_only),createdAt:Date.now(),bytes:0,total:0,filename:"download"}));
+  await fs.writeFile(metaPath,JSON.stringify({id,status:"preparing",url:body.url,format:body.format||"best",audio_only:Boolean(body.audio_only),createdAt:Date.now(),startedAt:Date.now(),bytes:0,total:0,filename:"download",extension:"",mime:"application/octet-stream"}));
   (async()=>{
     try{
       const upstream=await fetch(WORKER_URL+"/v1/media/download",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+WORKER_TOKEN},body:JSON.stringify(body)});
@@ -32,17 +32,32 @@ async function startJob(body){
       const filename=(upstream.headers.get("content-disposition")?.match(/filename="?([^";]+)"?/i)?.[1]||"downly-download").replace(/[\\/]/g,"_");
       const file=path.join(dir,filename);
       const total=Number(upstream.headers.get("content-length"))||0;
+      const mime=upstream.headers.get("content-type")||"application/octet-stream";
+      const extension=path.extname(filename).replace(/^\./,"").toLowerCase() || (mime.split("/")[1]||"").split(";")[0].toLowerCase();
       const out=createWriteStream(file);
       let bytes=0;
       if(!upstream.body) throw new Error("Worker returned no body");
-      for await(const chunk of upstream.body){const b=Buffer.from(chunk);bytes+=b.length;if(!out.write(b))await new Promise(r=>out.once("drain",r));await fs.writeFile(metaPath,JSON.stringify({id,status:"downloading",url:body.url,format:body.format||"best",audio_only:Boolean(body.audio_only),createdAt:Date.now(),bytes,total,filename}));}
+      for await(const chunk of upstream.body){const b=Buffer.from(chunk);bytes+=b.length;if(!out.write(b))await new Promise(r=>out.once("drain",r));await fs.writeFile(metaPath,JSON.stringify({id,status:"downloading",url:body.url,format:body.format||"best",audio_only:Boolean(body.audio_only),createdAt:Date.now(),startedAt:JSON.parse(await fs.readFile(metaPath,"utf8")).startedAt||Date.now(),bytes,total,filename,extension,mime}));}
       await new Promise((resolve,reject)=>{out.end(()=>resolve());out.on("error",reject);});
-      await fs.writeFile(metaPath,JSON.stringify({id,status:"ready",url:body.url,format:body.format||"best",audio_only:Boolean(body.audio_only),createdAt:Date.now(),bytes,total:bytes,filename}));
+      const elapsed=Math.max(1,(Date.now()-(JSON.parse(await fs.readFile(metaPath,"utf8")).startedAt||Date.now()))/1000);
+      await fs.writeFile(metaPath,JSON.stringify({id,status:"ready",url:body.url,format:body.format||"best",audio_only:Boolean(body.audio_only),createdAt:Date.now(),startedAt:Date.now(),bytes,total:bytes,filename,extension,mime,speedBps:Math.round(bytes/elapsed)}));
     }catch(e){await fs.writeFile(metaPath,JSON.stringify({id,status:"error",error:e?.message||"Download failed",createdAt:Date.now()})).catch(()=>{});}
   })();
   return {id};
 }
 async function readMeta(id){try{return JSON.parse(await fs.readFile(path.join(STORE,id,"meta.json"),"utf8"));}catch{return null;}}
+function enrichMeta(meta){
+  if(!meta)return null;
+  const now=Date.now();
+  const elapsed=Math.max(1,(now-(meta.startedAt||meta.createdAt||now))/1000);
+  const bytes=Number(meta.bytes)||0;
+  const speedBps=meta.status==="downloading" ? Math.round(bytes/elapsed) : Number(meta.speedBps)||0;
+  const total=Number(meta.total)||0;
+  const progress=total ? Math.min(100,Math.round(bytes/total*100)) : (meta.status==="ready"?100:0);
+  const etaSeconds=speedBps>0&&total>bytes ? Math.ceil((total-bytes)/speedBps) : 0;
+  const extension=meta.extension || (meta.filename?.includes(".") ? meta.filename.slice(meta.filename.lastIndexOf(".")+1).toLowerCase() : "");
+  return {...meta,bytes,total,progress,speedBps,etaSeconds,extension,sizeBytes:meta.status==="ready"?bytes:total||bytes};
+}
 async function serveJobFile(req,res,id){
   const meta=await readMeta(id);
   if(!meta)return json(res,404,{ok:false,error:"Download job not found"});
@@ -65,8 +80,17 @@ async function serveJobFile(req,res,id){
 async function staticFile(req,res){const pathname=new URL(req.url,"http://localhost").pathname;if(pathname==="/health")return json(res,200,{ok:true,service:"downly-termux",port:PORT,worker:WORKER_URL,resumable:true});if(pathname.startsWith("/api/"))return json(res,404,{ok:false,error:"API route not found on Termux server"});const clean=pathname.replace(/^\/+/, "");const file=clean&&!clean.includes("..")?new URL(clean,DIST):new URL("index.html",DIST);try{const st=await fs.stat(file);if(!st.isFile())throw 0;const ext=file.pathname.match(/\.[^.]+$/)?.[0].toLowerCase()||"";res.writeHead(200,{"Content-Type":mime[ext]||"application/octet-stream","Cache-Control":ext===".html"?"no-cache":"public, max-age=31536000, immutable"});createReadStream(file).pipe(res);}catch{try{const index=await fs.readFile(new URL("index.html",DIST));res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-cache"});res.end(index);}catch{json(res,500,{ok:false,error:"Run npm run build first"});}}}
 const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,"http://localhost");if(req.method==="OPTIONS")return res.writeHead(204).end();
 if(u.pathname==="/api/ytdlp/jobs"&&req.method==="POST"){let raw="";for await(const c of req)raw+=c;if(raw.length>32768)return json(res,413,{ok:false,error:"Request too large"});let body;try{body=JSON.parse(raw)}catch{return json(res,400,{ok:false,error:"Invalid JSON body"})}if(!body?.url)return json(res,400,{ok:false,error:"url is required"});const job=await startJob({url:body.url,format:body.format||"best",audio_only:Boolean(body.audio_only)});return json(res,202,{ok:true,...job});}
-const statusMatch=u.pathname.match(/^\/api\/ytdlp\/jobs\/([a-f0-9]+)$/);if(statusMatch&&req.method==="GET"){const meta=await readMeta(statusMatch[1]);return meta?json(res,200,{ok:true,...meta}):json(res,404,{ok:false,error:"Download job not found"});}
-const fileMatch=u.pathname.match(/^\/api\/ytdlp\/jobs\/([a-f0-9]+)\/file$/);if(fileMatch&&req.method==="GET")return serveJobFile(req,res,fileMatch[1]);
+const statusMatch=u.pathname.match(/^\/api\/ytdlp\/jobs\/([a-f0-9]+)$/);if(statusMatch&&req.method==="GET"){const meta=enrichMeta(await readMeta(statusMatch[1]));return meta?json(res,200,{ok:true,...meta}):json(res,404,{ok:false,error:"Download job not found"});}
+const fileMatch=u.pathname.match(/^\/api\/ytdlp\/jobs\/([a-f0-9]+)\/file$/);if(fileMatch&&(req.method==="GET"||req.method==="HEAD")){
+  const meta=enrichMeta(await readMeta(fileMatch[1]));
+  if(!meta)return json(res,404,{ok:false,error:"Download job not found"});
+  if(meta.status!=="ready")return json(res,409,{ok:false,error:"Download is not ready",status:meta.status,bytes:meta.bytes,total:meta.total});
+  const file=path.join(STORE,fileMatch[1],meta.filename);
+  const st=await fs.stat(file);
+  const headers={"Content-Type":meta.mime||"application/octet-stream","Content-Disposition":'attachment; filename="'+meta.filename.replace(/"/g,"")+'"',"Accept-Ranges":"bytes","Cache-Control":"no-store","Content-Length":String(st.size),"X-Downly-Extension":meta.extension||"","X-Downly-Size":String(st.size)};
+  if(req.method==="HEAD"){res.writeHead(200,headers);return res.end();}
+  return serveJobFile(req,res,fileMatch[1]);
+}
 if(u.pathname==="/api/ytdlp/download"&&(req.method==="GET"||req.method==="POST")){let body;if(req.method==="GET")body={url:u.searchParams.get("url"),format:u.searchParams.get("format")||"best",audio_only:u.searchParams.get("audio_only")==="true"};else{let raw="";for await(const c of req)raw+=c;try{body=JSON.parse(raw)}catch{return json(res,400,{ok:false,error:"Invalid JSON body"})}}if(!body?.url)return json(res,400,{ok:false,error:"url is required"});return workerDownloadLegacy(res,body);}
 if(u.pathname==="/api/youtube/info"&&(req.method==="GET"||req.method==="POST")){if(req.method==="GET"){const r=await youtubeInfo(u.searchParams.get("url"));return json(res,r.status,r.body);}let raw="";for await(const c of req)raw+=c;let body;try{body=JSON.parse(raw)}catch{return json(res,400,{ok:false,error:"Invalid JSON body"})}const r=await youtubeInfo(body?.url);return json(res,r.status,r.body);}
 return staticFile(req,res);}catch(e){json(res,502,{ok:false,error:e?.message||"Termux server error"});}});
