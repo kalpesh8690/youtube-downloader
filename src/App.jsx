@@ -696,6 +696,8 @@ export default function App() {
             <a href="#features" className="hover:text-slate-300">Features</a>
             <a href="#how" className="hover:text-slate-300">How it works</a>
             <a href="#history" className="hover:text-slate-300">History</a>
+            <a href="/privacy.html" className="hover:text-slate-300">Privacy</a>
+            <a href="/terms.html" className="hover:text-slate-300">Terms</a>
             <span>© 2026 Downly</span>
           </div>
         </div>
