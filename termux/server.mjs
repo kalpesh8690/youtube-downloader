@@ -27,7 +27,13 @@ async function startJob(body){
   const upstream=await workerFetch("/v1/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   const data=await upstream.json().catch(()=>null);
   if(!upstream.ok || !data?.id) throw new Error(data?.error||"Worker could not create download job");
-  return {id:data.id};
+  return data;
+}
+async function inspectMedia(url){
+  const upstream=await workerFetch("/v1/inspect",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url})});
+  const data=await upstream.json().catch(()=>null);
+  if(!upstream.ok || !data?.ok) throw new Error(data?.error||"Worker could not inspect this media URL");
+  return data;
 }
 async function readMeta(id){try{return JSON.parse(await fs.readFile(path.join(STORE,id,"meta.json"),"utf8"));}catch{return null;}}
 function enrichMeta(meta){
@@ -63,6 +69,18 @@ async function serveJobFile(req,res,id){
 }
 async function staticFile(req,res){const pathname=new URL(req.url,"http://localhost").pathname;if(pathname==="/health")return json(res,200,{ok:true,service:"downly-termux",port:PORT,worker:WORKER_URL,resumable:true});if(pathname.startsWith("/api/"))return json(res,404,{ok:false,error:"API route not found on Termux server"});const clean=pathname.replace(/^\/+/, "");const file=clean&&!clean.includes("..")?new URL(clean,DIST):new URL("index.html",DIST);try{const st=await fs.stat(file);if(!st.isFile())throw 0;const ext=file.pathname.match(/\.[^.]+$/)?.[0].toLowerCase()||"";res.writeHead(200,{"Content-Type":mime[ext]||"application/octet-stream","Cache-Control":ext===".html"?"no-cache":"public, max-age=31536000, immutable"});createReadStream(file).pipe(res);}catch{try{const index=await fs.readFile(new URL("index.html",DIST));res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-cache"});res.end(index);}catch{json(res,500,{ok:false,error:"Run npm run build first"});}}}
 const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,"http://localhost");if(req.method==="OPTIONS")return res.writeHead(204).end();
+if(u.pathname==="/api/media/info"&&req.method==="POST"){
+  let raw="";for await(const c of req)raw+=c;
+  let body;try{body=JSON.parse(raw)}catch{return json(res,400,{ok:false,error:"Invalid JSON body"})}
+  if(!body?.url)return json(res,400,{ok:false,error:"url is required"});
+  try{
+    const data=await inspectMedia(String(body.url).trim());
+    return json(res,200,data);
+  }catch(e){
+    console.error("[media-info] url="+body.url+" error="+(e?.stack||e));
+    return json(res,422,{ok:false,error:e?.message||"Unable to inspect media URL",code:"MEDIA_INSPECT_ERROR"});
+  }
+}
 if(u.pathname==="/api/ytdlp/jobs"&&req.method==="POST"){let raw="";for await(const c of req)raw+=c;if(raw.length>32768)return json(res,413,{ok:false,error:"Request too large"});let body;try{body=JSON.parse(raw)}catch{return json(res,400,{ok:false,error:"Invalid JSON body"})}if(!body?.url)return json(res,400,{ok:false,error:"url is required"});const job=await startJob({url:body.url,format:body.format||"best",audio_only:Boolean(body.audio_only)});return json(res,202,{ok:true,...job});}
 const statusMatch=u.pathname.match(/^\/api\/ytdlp\/jobs\/([a-f0-9]+)(?:\/(pause|resume|cancel))?$/);
 if(statusMatch && req.method==="POST" && statusMatch[2]){
@@ -109,7 +127,17 @@ if(u.pathname==="/api/ytdlp/download"&&(req.method==="GET"||req.method==="POST")
   const job=await startJob(body);
   return json(res,202,{ok:true,...job});
 }
-if(u.pathname==="/api/youtube/info"&&(req.method==="GET"||req.method==="POST")){if(req.method==="GET"){const r=await youtubeInfo(u.searchParams.get("url"));return json(res,r.status,r.body);}let raw="";for await(const c of req)raw+=c;let body;try{body=JSON.parse(raw)}catch{return json(res,400,{ok:false,error:"Invalid JSON body"})}const r=await youtubeInfo(body?.url);return json(res,r.status,r.body);}
+if(u.pathname==="/api/youtube/info"&&(req.method==="GET"||req.method==="POST")){
+  if(req.method==="GET"){
+    const value=u.searchParams.get("url");
+    try{return json(res,200,await inspectMedia(value));}
+    catch(e){return json(res,422,{ok:false,error:e?.message||"Unable to inspect YouTube URL",code:"MEDIA_INSPECT_ERROR"});}
+  }
+  let raw="";for await(const c of req)raw+=c;
+  let body;try{body=JSON.parse(raw)}catch{return json(res,400,{ok:false,error:"Invalid JSON body"})}
+  try{return json(res,200,await inspectMedia(body?.url));}
+  catch(e){return json(res,422,{ok:false,error:e?.message||"Unable to inspect YouTube URL",code:"MEDIA_INSPECT_ERROR"});}
+}
 return staticFile(req,res);}catch(e){console.error("[api-error]",req.method,req.url,e?.stack||e);json(res,502,{ok:false,error:e?.message||"Termux server error",code:"TERMUX_API_ERROR"});}});
 async function workerDownloadLegacy(res,body){if(!WORKER_TOKEN)return json(res,503,{ok:false,error:"YTDLP_WORKER_TOKEN is not configured"});const upstream=await fetch(WORKER_URL+"/v1/media/download",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+WORKER_TOKEN},body:JSON.stringify(body)});const headers={"Content-Type":upstream.headers.get("content-type")||"application/octet-stream","Cache-Control":"no-store"};for(const h of ["content-disposition","content-length"])if(upstream.headers.get(h))headers[h[0].toUpperCase()+h.slice(1)]=upstream.headers.get(h);res.writeHead(upstream.status,headers);if(!upstream.body)return res.end();for await(const chunk of upstream.body)res.write(Buffer.from(chunk));res.end();}
 server.listen(PORT,HOST,()=>console.log("[startup] Downly Termux frontend http://127.0.0.1:"+PORT+" | worker="+WORKER_URL+" | token="+(WORKER_TOKEN?"configured":"MISSING")+" | resumable=true"));
