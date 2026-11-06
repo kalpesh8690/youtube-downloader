@@ -421,7 +421,7 @@ export default function App() {
         const audioOnly = format === "MP3";
         const workerFormat = audioOnly ? "bestaudio" : "best";
 
-        if (activeJobRef.current && downloadSessionRef.current && transferState === "paused") {
+        if (activeJobRef.current && transferState === "paused") {
           await resumeDownload();
           return;
         }
