@@ -195,6 +195,8 @@ if(u.pathname==="/api/ytdlp/stream"&&(req.method==="GET"||req.method==="POST")){
     for(const name of ["content-type","content-disposition","cache-control","accept-ranges","content-length","content-range"]){
       const value=upstream.headers.get(name);if(value)headers[name]=value;
     }
+    headers["x-downly-stream"]="in-page";
+    headers["x-downly-backend"]="termux-worker";
     res.writeHead(upstream.status,headers);
     if(!upstream.body)return res.end();
     for await(const chunk of upstream.body){
@@ -274,4 +276,4 @@ if(u.pathname==="/api/youtube/info"&&(req.method==="GET"||req.method==="POST")){
   catch(e){return json(res,422,{ok:false,error:e?.message||"Unable to inspect YouTube URL",code:"MEDIA_INSPECT_ERROR"});}
 }
 return staticFile(req,res);}catch(e){console.error("[api-error]",req.method,new URL(req.url,"http://localhost").pathname,e?.stack||e);json(res,502,{ok:false,error:e?.message||"Termux server error",code:"TERMUX_API_ERROR"});}});
-server.listen(PORT,HOST,()=>console.log("[startup] Downly Termux frontend http://127.0.0.1:"+PORT+" | worker="+WORKER_URL+" | token="+(WORKER_TOKEN?"configured":"MISSING")+" | nativeDownloads=true | streamBackpressure=true"));
+server.listen(PORT,HOST,()=>console.log("[startup] Downly Termux frontend http://127.0.0.1:"+PORT+" | worker="+WORKER_URL+" | token="+(WORKER_TOKEN?"configured":"MISSING")+" | inPageStreaming=true | streamBackpressure=true"));
