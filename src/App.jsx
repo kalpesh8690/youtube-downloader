@@ -17,6 +17,15 @@ function safeHostname(value) {
   try { return new URL(value).hostname; } catch { return "Invalid media URL"; }
 }
 
+function safeHistoryUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.origin + parsed.pathname;
+  } catch {
+    return String(value || "").slice(0, 500);
+  }
+}
+
 function fileExtension(value) {
   try {
     const pathname = new URL(value).pathname;
@@ -139,7 +148,9 @@ export default function App() {
   }, [url]);
 
   const saveHistory = (item) => {
-    const next = [item, ...history.filter((x) => x.url !== item.url)].slice(0, 10);
+    // History is display-only; do not persist signed query tokens or fragments.
+    const safeItem = { ...item, url: safeHistoryUrl(item.url) };
+    const next = [safeItem, ...history.filter((x) => x.url !== safeItem.url)].slice(0, 10);
     setHistory(next);
     try { localStorage.setItem("downly-history", JSON.stringify(next)); } catch {}
   };
