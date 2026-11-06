@@ -1,15 +1,12 @@
 import http from "node:http";
 import { URL } from "node:url";
-import { promises as fs, createReadStream, createWriteStream } from "node:fs";
-import path from "node:path";
-import crypto from "node:crypto";
+import { promises as fs, createReadStream } from "node:fs";
 
-const HOST=process.env.HOST||"0.0.0.0";
+const HOST=process.env.HOST||"127.0.0.1";
 const PORT=Number(process.env.PORT||3000);
 const WORKER_URL=(process.env.YTDLP_WORKER_URL||"http://127.0.0.1:8080").replace(/\/$/,"");
 const WORKER_TOKEN=process.env.YTDLP_WORKER_TOKEN||"";
 const DIST=new URL("../dist/",import.meta.url);
-const STORE=path.resolve(process.env.DOWNLOAD_STORE||path.join(process.env.HOME||".",".downly-downloads"));
 const mime={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".json":"application/json; charset=utf-8",".svg":"image/svg+xml",".png":"image/png",".jpg":"image/jpeg",".jpeg":"image/jpeg",".webp":"image/webp",".ico":"image/x-icon"};
 const securityHeaders = {
   "X-Content-Type-Options": "nosniff",
@@ -47,8 +44,6 @@ async function readJsonBody(req, maxBytes=32768) {
 }
 
 
-await fs.mkdir(STORE,{recursive:true});
-
 function json(res,status,body){if(res.headersSent){res.destroy();return;}const data=JSON.stringify(body);res.writeHead(status,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store",...securityHeaders});res.end(data);}
 function youtubeId(input){try{const u=new URL(String(input||""));const h=u.hostname.toLowerCase();if(!["youtube.com","www.youtube.com","m.youtube.com","youtu.be","www.youtu.be"].includes(h))return null;if(h.includes("youtu.be"))return u.pathname.split("/").filter(Boolean)[0]||null;if(u.pathname==="/watch")return u.searchParams.get("v");return u.pathname.match(/^\/(shorts|embed|live)\/([^/?#]+)/)?.[2]||null;}catch{return null;}}
 async function youtubeInfo(url){const id=youtubeId(url);if(!id)return{status:400,body:{ok:false,error:"Valid YouTube URL required",code:"INVALID_URL"}};const canonical="https://www.youtube.com/watch?v="+encodeURIComponent(id);const r=await fetch("https://www.youtube.com/oembed?url="+encodeURIComponent(canonical)+"&format=json");if(r.status===404)return{status:404,body:{ok:false,error:"Video information unavailable",code:"VIDEO_NOT_FOUND",id}};if(!r.ok)return{status:502,body:{ok:false,error:"YouTube metadata service returned an error",code:"UPSTREAM_ERROR",id}};const d=await r.json();return{status:200,body:{ok:true,id,title:d.title,author:d.author_name,thumbnail:"https://i.ytimg.com/vi/"+id+"/hqdefault.jpg",watchUrl:canonical,formats:[{format:"MP4",quality:"Best available",available:true},{format:"MP3",quality:"Audio",available:true}],note:"Downloads are handled by your local Termux yt-dlp worker."}};}
@@ -70,39 +65,8 @@ async function inspectMedia(url){
   if(!upstream.ok || !data?.ok) throw new Error(data?.error||"Worker could not inspect this media URL");
   return data;
 }
-async function readMeta(id){try{return JSON.parse(await fs.readFile(path.join(STORE,id,"meta.json"),"utf8"));}catch{return null;}}
-function enrichMeta(meta){
-  if(!meta)return null;
-  const now=Date.now();
-  const elapsed=Math.max(1,(now-(meta.startedAt||meta.createdAt||now))/1000);
-  const bytes=Number(meta.bytes)||0;
-  const speedBps=meta.status==="downloading" ? Math.round(bytes/elapsed) : Number(meta.speedBps)||0;
-  const total=Number(meta.total)||0;
-  const progress=total ? Math.min(100,Math.round(bytes/total*100)) : (meta.status==="ready"?100:0);
-  const etaSeconds=speedBps>0&&total>bytes ? Math.ceil((total-bytes)/speedBps) : 0;
-  const extension=meta.extension || (meta.filename?.includes(".") ? meta.filename.slice(meta.filename.lastIndexOf(".")+1).toLowerCase() : "");
-  return {...meta,bytes,total,progress,speedBps,etaSeconds,extension,sizeBytes:meta.status==="ready"?bytes:total||bytes};
-}
-async function serveJobFile(req,res,id){
-  const meta=await readMeta(id);
-  if(!meta)return json(res,404,{ok:false,error:"Download job not found"});
-  if(meta.status!=="ready")return json(res,409,{ok:false,error:"Download is not ready",status:meta.status,bytes:meta.bytes||0,total:meta.total||0});
-  const file=path.join(STORE,id,meta.filename);
-  const st=await fs.stat(file);
-  const total=st.size;
-  const range=req.headers.range;
-  const common={"Content-Type":"application/octet-stream","Content-Disposition":'attachment; filename="'+meta.filename.replace(/"/g,"")+'"',"Accept-Ranges":"bytes","Cache-Control":"no-store","Content-Length":String(total)};
-  if(!range){res.writeHead(200,common);return createReadStream(file).pipe(res);}
-  const m=/bytes=(\d*)-(\d*)/.exec(range);
-  if(!m)return json(res,416,{ok:false,error:"Invalid Range"});
-  let start=m[1]?Number(m[1]):Math.max(0,total-Number(m[2]||"0"));
-  let end=m[2]?Number(m[2]):total-1;
-  if(!Number.isInteger(start)||!Number.isInteger(end)||start<0||end<start||start>=total){res.writeHead(416,{"Content-Range":"bytes */"+total});return res.end();}
-  end=Math.min(end,total-1);
-  res.writeHead(206,{...common,"Content-Length":String(end-start+1),"Content-Range":`bytes ${start}-${end}/${total}`});
-  return createReadStream(file,{start,end}).pipe(res);
-}
-async function staticFile(req,res){const pathname=new URL(req.url,"http://localhost").pathname;if(pathname==="/health")return json(res,200,{ok:true,service:"downly-termux",port:PORT,worker:WORKER_URL,resumable:true});if(pathname.startsWith("/api/"))return json(res,404,{ok:false,error:"API route not found on Termux server"});const clean=pathname.replace(/^\/+/, "");const file=clean&&!clean.includes("..")?new URL(clean,DIST):new URL("index.html",DIST);try{const st=await fs.stat(file);if(!st.isFile())throw 0;const ext=file.pathname.match(/\.[^.]+$/)?.[0].toLowerCase()||"";res.writeHead(200,{"Content-Type":mime[ext]||"application/octet-stream","Cache-Control":ext===".html"?"no-cache":"public, max-age=31536000, immutable",...securityHeaders});createReadStream(file).pipe(res);}catch{try{const index=await fs.readFile(new URL("index.html",DIST));res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-cache",...securityHeaders});res.end(index);}catch{json(res,500,{ok:false,error:"Run npm run build first"});}}}
+
+async function staticFile(req,res){const pathname=new URL(req.url,"http://localhost").pathname;if(pathname==="/health")return json(res,200,{ok:true,service:"downly-termux",port:PORT});if(pathname.startsWith("/api/"))return json(res,404,{ok:false,error:"API route not found on Termux server"});const clean=pathname.replace(/^\/+/, "");const file=clean&&!clean.includes("..")?new URL(clean,DIST):new URL("index.html",DIST);try{const st=await fs.stat(file);if(!st.isFile())throw 0;const ext=file.pathname.match(/\.[^.]+$/)?.[0].toLowerCase()||"";res.writeHead(200,{"Content-Type":mime[ext]||"application/octet-stream","Cache-Control":ext===".html"?"no-cache":"public, max-age=31536000, immutable",...securityHeaders});createReadStream(file).pipe(res);}catch{try{const index=await fs.readFile(new URL("index.html",DIST));res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-cache",...securityHeaders});res.end(index);}catch{json(res,500,{ok:false,error:"Run npm run build first"});}}}
 const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,"http://localhost");if(req.method==="OPTIONS")return res.writeHead(204).end();
 if(u.pathname==="/api/detect"&&(req.method==="GET"||req.method==="POST")){
   let pageUrl=u.searchParams.get("url");
