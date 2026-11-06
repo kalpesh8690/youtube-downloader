@@ -77,7 +77,7 @@ if(u.pathname==="/api/detect"&&(req.method==="GET"||req.method==="POST")){
   if(!pageUrl)return json(res,400,{ok:false,error:"url is required"});
   if(!rateAllowed(req,"detect",15))return json(res,429,{ok:false,error:"Too many page scans. Please wait and retry.",code:"RATE_LIMITED"});
   try{
-    const upstream=await workerFetch("/v1/crawl?"+new URLSearchParams({url:pageUrl}).toString(),{method:"GET"});
+    const upstream=await workerFetch("/v1/crawl",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:pageUrl})});
     const data=await upstream.json().catch(()=>null);
     if(!upstream.ok||!data?.ok)return json(res,upstream.status,{ok:false,error:data?.error||"Page scan failed"});
     const items=Array.isArray(data.items)?data.items:[];
@@ -114,16 +114,20 @@ if(u.pathname==="/api/health"&&req.method==="GET"){
     return json(res,503,{ok:false,service:"downly-termux",worker:"offline"});
   }
 }
-if(u.pathname==="/api/media/crawl"&&req.method==="GET"){
-  const pageUrl=u.searchParams.get("url");
+if(u.pathname==="/api/media/crawl"&&(req.method==="GET"||req.method==="POST")){
+  let pageUrl=u.searchParams.get("url");
+  if(req.method==="POST"){
+    let body;try{body=await readJsonBody(req,8192);}catch(e){return json(res,e.statusCode||400,{ok:false,error:e.message});}
+    pageUrl=body?.url;
+  }
   if(!pageUrl)return json(res,400,{ok:false,error:"url is required"});
   if(!rateAllowed(req,"crawl",15))return json(res,429,{ok:false,error:"Too many page scans. Please wait and retry.",code:"RATE_LIMITED"});
   try{
-    const upstream=await workerFetch("/v1/crawl?"+new URLSearchParams({url:pageUrl}).toString(),{method:"GET"});
+    const upstream=await workerFetch("/v1/crawl",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:pageUrl})});
     const data=await upstream.json().catch(()=>null);
     return json(res,upstream.status,data||{ok:false,error:"Crawler returned an invalid response"});
   }catch(e){
-    console.error("[media-crawl] error="+(e?.stack||e));
+    console.error("[media-crawl] error="+(e?.message||"crawler failed"));
     return json(res,502,{ok:false,error:"Media crawler unavailable",code:"MEDIA_CRAWL_ERROR"});
   }
 }
