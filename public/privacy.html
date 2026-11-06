@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070b14">
+  <title>Privacy · Downly</title>
+  <style>
+    :root{color-scheme:dark;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#060914;color:#f8fafc}
+    *{box-sizing:border-box}body{margin:0;line-height:1.7}.wrap{max-width:820px;margin:auto;padding:48px 22px 72px}
+    a{color:#a5b4fc}h1{font-size:clamp(32px,6vw,48px);line-height:1.1;letter-spacing:-.04em}
+    h2{margin-top:34px;font-size:20px}p,li{color:#cbd5e1}.muted{color:#64748b;font-size:13px}
+    .card{border:1px solid #253047;background:#0f172a;border-radius:18px;padding:18px;margin:20px 0}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <p class="muted"><a href="/">← Back to Downly</a></p>
+    <h1>Privacy</h1>
+    <p class="muted">Last updated: 7 November 2026</p>
+    <p>Downly is designed as a self-hosted media inspection and download interface. In the Termux setup, requests are processed by the Node API and worker running on your own Android device.</p>
+
+    <h2>Information processed</h2>
+    <p>When you inspect a link, Downly sends the submitted URL to the configured worker to retrieve public page metadata and available media formats. When you start a download, the selected source URL and format are sent to the worker so it can stream the source or process it with yt-dlp and FFmpeg.</p>
+    <p>Native streaming downloads are not buffered into a complete file in the browser and are not intentionally saved as a completed file on the worker. Temporary operating-system or media-tool buffers may still be used during processing.</p>
+
+    <h2>Local history</h2>
+    <p>Downly stores a small download-history list in this browser's local storage. It includes display information such as title, thumbnail URL, filename, format and a sanitized source URL. Query strings and fragments are removed from the saved source URL to avoid retaining signed query tokens. This history remains in the browser until the browser's site data is cleared.</p>
+
+    <h2>Logs and infrastructure</h2>
+    <p>The worker's application logs omit URL query strings. The local Termux API and any tunnel, hosting provider or network infrastructure used to expose the app may still process connection metadata. Do not assume that a public tunnel is private merely because the worker itself listens on loopback.</p>
+
+    <div class="card">
+      <strong>Self-hosting security</strong>
+      <p>Do not expose the Termux API or worker as an unrestricted public service. Use a named, access-protected tunnel such as Cloudflare Access, keep worker credentials private, and rotate any sample or previously shared token. Downly does not currently provide user accounts, per-user authentication or multi-tenant quotas.</p>
+    </div>
+
+    <h2>Third-party websites</h2>
+    <p>Media metadata, thumbnails and download streams may come from third-party websites. Those sites may receive requests from your device or worker and process them under their own privacy policies and terms.</p>
+
+    <h2>Contact and changes</h2>
+    <p>This page describes the current self-hosted implementation. Review the repository before exposing a modified deployment to other users.</p>
+    <p class="muted"><a href="/">Return to Downly</a></p>
+  </main>
+</body>
+</html>
