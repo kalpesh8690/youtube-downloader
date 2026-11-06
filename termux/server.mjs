@@ -81,6 +81,31 @@ if(u.pathname==="/api/media/info"&&req.method==="POST"){
     return json(res,422,{ok:false,error:e?.message||"Unable to inspect media URL",code:"MEDIA_INSPECT_ERROR"});
   }
 }
+if(u.pathname==="/api/ytdlp/stream"&&req.method==="GET"){
+  const mediaUrl=u.searchParams.get("url");
+  if(!mediaUrl)return json(res,400,{ok:false,error:"url is required"});
+  try{
+    const params=new URLSearchParams({
+      url:mediaUrl,
+      format:u.searchParams.get("format")||"best",
+      audio_only:u.searchParams.get("audio_only")==="true"?"true":"false",
+      filename:u.searchParams.get("filename")||""
+    });
+    const upstream=await workerFetch("/v1/stream?"+params.toString(),{method:"GET"});
+    const headers={};
+    for(const name of ["content-type","content-disposition","cache-control","accept-ranges","x-content-type-options","content-length"]){
+      const value=upstream.headers.get(name);if(value)headers[name]=value;
+    }
+    res.writeHead(upstream.status,headers);
+    if(!upstream.body)return res.end();
+    for await(const chunk of upstream.body)res.write(Buffer.from(chunk));
+    return res.end();
+  }catch(e){
+    console.error("[stream-proxy] url="+mediaUrl+" error="+(e?.stack||e));
+    if(!res.headersSent)return json(res,502,{ok:false,error:"Direct download stream unavailable",code:"STREAM_PROXY_ERROR"});
+    res.destroy();
+  }
+}
 if(u.pathname==="/api/ytdlp/jobs"&&req.method==="POST"){let raw="";for await(const c of req)raw+=c;if(raw.length>32768)return json(res,413,{ok:false,error:"Request too large"});let body;try{body=JSON.parse(raw)}catch{return json(res,400,{ok:false,error:"Invalid JSON body"})}if(!body?.url)return json(res,400,{ok:false,error:"url is required"});const job=await startJob({url:body.url,format:body.format||"best",audio_only:Boolean(body.audio_only)});return json(res,202,{ok:true,...job});}
 const statusMatch=u.pathname.match(/^\/api\/ytdlp\/jobs\/([a-f0-9]+)(?:\/(pause|resume|cancel))?$/);
 if(statusMatch && req.method==="POST" && statusMatch[2]){
