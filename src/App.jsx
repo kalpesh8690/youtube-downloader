@@ -242,23 +242,64 @@ export default function App() {
       if (youtube) {
         const audioOnly = format === "MP3";
         const workerFormat = audioOnly ? "bestaudio" : "best";
-        const downloadUrl = "/api/ytdlp/download?url=" + encodeURIComponent(url.trim())
-          + "&format=" + encodeURIComponent(workerFormat)
-          + "&audio_only=" + String(audioOnly);
-        let indeterminateProgress = 8;
-        setProgress(indeterminateProgress);
-        setProgressLabel("yt-dlp is preparing your file...");
-        const result = await downloadWithProgress(downloadUrl, (received, total) => {
-          if (!total) indeterminateProgress = Math.min(95, indeterminateProgress + 1);
-          const pct = total > 0 ? Math.min(99, Math.round((received / total) * 100)) : indeterminateProgress;
-          setProgress(pct);
-          setProgressLabel(total ? "Downloading " + formatBytes(received) + " / " + formatBytes(total) : "Downloading " + formatBytes(received));
+        setProgress(8);
+        setProgressLabel("Creating resumable download job...");
+
+        const jobResponse = await fetch("/api/ytdlp/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: url.trim(),
+            format: workerFormat,
+            audio_only: audioOnly
+          })
         });
-        saveBlob(result.blob, result.filename);
+        const jobData = await jobResponse.json().catch(() => null);
+        if (!jobResponse.ok || !jobData?.id) {
+          throw new Error(jobData?.error || "Could not create download job.");
+        }
+
+        const jobId = jobData.id;
+        let status;
+        for (;;) {
+          const statusResponse = await fetch("/api/ytdlp/jobs/" + jobId, { cache: "no-store" });
+          status = await statusResponse.json().catch(() => null);
+          if (!statusResponse.ok || !status?.ok) throw new Error(status?.error || "Could not read download status.");
+          if (status.status === "error") throw new Error(status.error || "Download preparation failed.");
+          if (status.status === "ready") break;
+
+          const total = Number(status.total) || 0;
+          const bytes = Number(status.bytes) || 0;
+          const pct = total ? Math.min(95, Math.round((bytes / total) * 95)) : Math.min(90, progress + 2);
+          setProgress(pct);
+          setProgressLabel(total
+            ? "Preparing file " + formatBytes(bytes) + " / " + formatBytes(total)
+            : "yt-dlp is preparing your file...");
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+        }
+
+        const fileUrl = "/api/ytdlp/jobs/" + jobId + "/file";
+        const anchor = document.createElement("a");
+        anchor.href = fileUrl;
+        anchor.download = status.filename || "";
+        anchor.rel = "noopener";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+
         setProgress(100);
-        setProgressLabel("Download complete");
-        setMessage("Download complete — " + result.filename);
-        saveHistory({url:url.trim(),title:info?.title||"YouTube video",thumbnail:info?.thumbnail,format:audioOnly?"MP3":"MP4",quality,createdAt:new Date().toISOString()});
+        setProgressLabel("Download started — resumable");
+        setMessage("Download started. The file endpoint supports HTTP Range requests, so an interrupted browser download can resume instead of restarting from zero.");
+        saveHistory({
+          url: url.trim(),
+          title: info?.title || "YouTube video",
+          thumbnail: info?.thumbnail,
+          format: audioOnly ? "MP3" : "MP4",
+          quality,
+          createdAt: new Date().toISOString(),
+          resumable: true,
+          jobId
+        });
         return;
       }
 
