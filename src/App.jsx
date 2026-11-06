@@ -7,10 +7,10 @@ import {
 
 const outputModes = ["MP4", "MP3"];
 const features = [
-  ["Lightning fast", "A clean workflow designed to minimize clicks.", Zap],
-  ["Direct media", "Download public direct video and audio files you are authorized to save.", FileVideo],
-  ["Original quality", "Keep the source file unchanged without transcoding.", Check],
-  ["Responsive", "A polished experience on phones and desktops.", Globe]
+  ["Fast path", "Resolved direct media sources use a lightweight streaming path instead of a completed server-side copy.", Zap],
+  ["Universal scan", "yt-dlp inspection plus a generic crawler can discover common MP4, WebM, MP3, HLS and DASH sources.", Globe],
+  ["Smart conversion", "If MP3 is not provided, FFmpeg converts compatible audio while streaming the result.", FileVideo],
+  ["Native downloads", "The final response is an attachment, so Chrome owns the download instead of React buffering the file.", Download]
 ];
 
 function safeHostname(value) {
@@ -80,6 +80,7 @@ export default function App() {
   const [scanMeta, setScanMeta] = useState({ pagesScanned: 0, count: 0, directCount: 0, streamCount: 0, partial: false });
   const [transferState, setTransferState] = useState("idle");
   const [workerStatus, setWorkerStatus] = useState("checking");
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     try {
@@ -295,8 +296,10 @@ export default function App() {
       const value = await navigator.clipboard.readText();
       if (!value) throw new Error("Clipboard is empty.");
       setUrl(value.trim());
+      setCopied(true);
       setError("");
-      setMessage("Link pasted from clipboard.");
+      setMessage("Link pasted. Inspecting automatically…");
+      window.setTimeout(() => setCopied(false), 1600);
     } catch (e) {
       setError(e?.message || "Clipboard access is unavailable. Paste the link manually.");
     }
@@ -495,8 +498,8 @@ export default function App() {
                 <div className="relative">
                   <Link2 className="absolute left-4 top-4 text-slate-500" size={18}/>
                   <input value={url} onChange={(e)=>{setUrl(e.target.value);if(error)setError("");}} onKeyDown={(e)=>e.key==="Enter"&&submit()} placeholder="https://..." aria-label="Media URL" className="h-14 w-full rounded-2xl border border-white/10 bg-white/[0.03] pl-11 pr-24 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-400/50 focus:ring-4 focus:ring-indigo-500/10"/>
-                  <button onClick={pasteFromClipboard} className="absolute right-2 top-2 flex h-10 items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-300 hover:bg-white/10">
-                    <Clipboard size={14}/> Paste
+                  <button onClick={pasteFromClipboard} className="absolute right-2 top-2 flex h-10 items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-300 hover:bg-white/10" aria-label="Paste URL from clipboard">
+                    {copied ? <Check size={14} className="text-emerald-300"/> : <Clipboard size={14}/>} {copied ? "Pasted" : "Paste"}
                   </button>
                 </div>
                 <button onClick={submit} disabled={loading || inspectState==="loading" || !url.trim()} className="mt-2 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-white font-bold text-slate-950 transition hover:bg-indigo-50 disabled:cursor-wait disabled:opacity-60">
@@ -673,7 +676,18 @@ export default function App() {
       </main>
 
       <footer className="border-t border-white/5">
-        <div className="mx-auto flex max-w-7xl flex-col gap-3 px-5 py-8 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between sm:px-8"><span>© 2026 Downly</span><span>Built with React + Tailwind CSS + Lucide</span></div>
+        <div className="mx-auto flex max-w-7xl flex-col gap-5 px-5 py-10 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+          <div>
+            <div className="font-bold text-slate-400">Downly</div>
+            <p className="mt-1 max-w-md leading-5">A local-first media inspection and download interface. Use it only for media you own or are authorized to save.</p>
+          </div>
+          <div className="flex flex-wrap gap-4">
+            <a href="#features" className="hover:text-slate-300">Features</a>
+            <a href="#how" className="hover:text-slate-300">How it works</a>
+            <a href="#history" className="hover:text-slate-300">History</a>
+            <span>© 2026 Downly</span>
+          </div>
+        </div>
       </footer>
     </div>
   );
