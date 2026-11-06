@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertCircle, ArrowRight, Check, Download, FileVideo, Globe, History,
-  Link2, Loader2, Menu, Play, RefreshCw, ShieldCheck, Sparkles,
-  TrendingDown, X, Zap
+  AlertCircle, ArrowRight, Check, Clipboard, Download, FileVideo, Globe, History,
+  Link2, Loader2, Menu, Pause, Play, RefreshCw, ShieldCheck, Sparkles,
+  TrendingDown, X, Zap, Gauge, Clock3, Trash2
 } from "lucide-react";
 
 const formats = ["Original", "MP4", "MP3"];
@@ -222,6 +222,39 @@ export default function App() {
   };
 
   const retry = () => submit();
+
+  const pasteFromClipboard = async () => {
+    try {
+      const value = await navigator.clipboard.readText();
+      if (!value) throw new Error("Clipboard is empty.");
+      setUrl(value.trim());
+      setError("");
+      setMessage("Link pasted from clipboard.");
+    } catch (e) {
+      setError(e?.message || "Clipboard access is unavailable. Paste the link manually.");
+    }
+  };
+
+  const clearWorkspace = () => {
+    setUrl("");
+    setInfo(null);
+    setDetectedMedia([]);
+    setSelectedMediaUrl("");
+    setDownloadMeta(null);
+    setError("");
+    setMessage("");
+    setProgress(0);
+    setProgressLabel("Ready");
+    setTransferState("idle");
+  };
+
+  const formatEta = (seconds) => {
+    const n = Math.max(0, Number(seconds) || 0);
+    if (n < 60) return n + "s";
+    const m = Math.floor(n / 60);
+    const s = n % 60;
+    return m + "m " + s + "s";
+  };
 
   const runIdmDownload = async (jobId, filename, mime, total, startAt = 0) => {
     const session = downloadSessionRef.current || {
@@ -506,94 +539,84 @@ export default function App() {
       </header>
 
       <main className="relative z-10">
-        <section className="mx-auto max-w-5xl px-5 pb-16 pt-20 text-center sm:px-8 sm:pt-28">
-          <div className="glass mb-6 inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-indigo-200">
-            <Sparkles size={14} /> Fast, simple & beautifully designed
-          </div>
-          <h1 className="text-4xl font-extrabold leading-tight tracking-[-0.05em] sm:text-6xl">
-            Download videos.<br />
-            <span className="bg-gradient-to-r from-indigo-300 via-violet-300 to-fuchsia-300 bg-clip-text text-transparent">Keep it simple.</span>
-          </h1>
-          <p className="mx-auto mt-6 max-w-2xl text-base leading-7 text-slate-400 sm:text-lg">
-            Scan a public website for direct video/audio files, then stream the original file to your device.
-          </p>
-
-          <div className="glass mx-auto mt-10 max-w-3xl rounded-[28px] p-2 shadow-glow sm:p-3">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <div className="relative flex min-w-0 flex-1 items-center">
-                <Link2 className="absolute left-4 text-slate-500" size={19} />
-                <input
-                  value={url}
-                  onChange={(e) => { setUrl(e.target.value); if (error) setError(""); }}
-                  onKeyDown={(e) => e.key === "Enter" && submit()}
-                  placeholder="Paste a webpage or direct media URL..."
-                  aria-label="Webpage or direct media URL"
-                  className="h-14 w-full rounded-2xl border border-white/10 bg-black/25 pl-12 pr-4 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-400/50 focus:bg-black/35 focus:ring-4 focus:ring-indigo-500/10"
-                />
+        <section className="mx-auto max-w-6xl px-5 pb-14 pt-14 sm:px-8 sm:pt-20">
+          <div className="grid items-center gap-10 lg:grid-cols-[1.05fr_.95fr]">
+            <div className="text-left">
+              <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-indigo-400/20 bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-200">
+                <Sparkles size={13} /> Downly 2.0 · Local worker powered
               </div>
-              <button onClick={submit} disabled={loading} className="group flex h-14 items-center justify-center gap-2 rounded-2xl bg-white px-6 font-bold text-slate-950 transition hover:bg-indigo-50 disabled:cursor-wait disabled:opacity-70">
-                {loading ? <Loader2 className="animate-spin" size={19} /> : <Download size={19} />}
-                {loading ? "Checking..." : "Detect media"}
-                <ArrowRight className="transition group-hover:translate-x-1" size={17} />
-              </button>
+              <h1 className="max-w-3xl text-4xl font-black leading-[1.05] tracking-[-0.05em] sm:text-6xl">
+                Your media.<br />
+                <span className="bg-gradient-to-r from-indigo-300 via-violet-300 to-fuchsia-300 bg-clip-text text-transparent">Your download control.</span>
+              </h1>
+              <p className="mt-5 max-w-xl text-sm leading-7 text-slate-400 sm:text-base">
+                Paste a public media URL, inspect it, choose the format, and manage the download with live progress, pause, resume and cancellation.
+              </p>
+              <div className="mt-7 flex flex-wrap gap-2 text-[11px] text-slate-500">
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5"><ShieldCheck className="mr-1 inline" size={12}/> On-device worker</span>
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5"><Gauge className="mr-1 inline" size={12}/> Live speed</span>
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5"><RefreshCw className="mr-1 inline" size={12}/> Resume</span>
+              </div>
             </div>
 
-            {(loading || progress > 0 || downloadMeta) && (
-              <div className="px-3 pb-1 pt-4 text-left">
-                <div className="mb-2 flex items-center justify-between text-xs">
-                  <span className="truncate pr-3 text-slate-400">{progressLabel}</span>
-                  <span className="font-bold text-indigo-200">{progress}%</span>
+            <div className="glass rounded-[30px] border border-white/10 p-3 shadow-2xl shadow-indigo-950/30">
+              <div className="rounded-[24px] border border-white/10 bg-black/25 p-3">
+                <div className="mb-3 flex items-center justify-between px-1">
+                  <div>
+                    <p className="text-sm font-bold text-white">Download console</p>
+                    <p className="text-[11px] text-slate-500">Paste a link to begin</p>
+                  </div>
+                  <button onClick={clearWorkspace} className="rounded-lg p-2 text-slate-500 hover:bg-white/5 hover:text-white" title="Clear">
+                    <Trash2 size={15}/>
+                  </button>
                 </div>
-                <div className="h-2 overflow-hidden rounded-full bg-white/10" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progress}>
-                  <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 transition-all duration-300" style={{ width: `${progress}%` }} />
+                <div className="relative">
+                  <Link2 className="absolute left-4 top-4 text-slate-500" size={18}/>
+                  <input value={url} onChange={(e)=>{setUrl(e.target.value);if(error)setError("");}} onKeyDown={(e)=>e.key==="Enter"&&submit()} placeholder="https://..." aria-label="Media URL" className="h-14 w-full rounded-2xl border border-white/10 bg-white/[0.03] pl-11 pr-24 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-400/50 focus:ring-4 focus:ring-indigo-500/10"/>
+                  <button onClick={pasteFromClipboard} className="absolute right-2 top-2 flex h-10 items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-300 hover:bg-white/10">
+                    <Clipboard size={14}/> Paste
+                  </button>
                 </div>
-                {downloadMeta && (
-                  <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-xs">
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      <div><span className="block text-slate-500">File</span><b className="truncate">{downloadMeta.filename || "—"}</b></div>
-                      <div><span className="block text-slate-500">Type</span><b>{String(downloadMeta.extension || "—").toUpperCase()}</b></div>
-                      <div><span className="block text-slate-500">Size</span><b>{downloadMeta.sizeBytes ? formatBytes(Number(downloadMeta.sizeBytes)) : "Calculating..."}</b></div>
-                      <div><span className="block text-slate-500">Speed</span><b>{downloadSpeed ? formatBytes(downloadSpeed) + "/s" : "—"}</b></div>
+                <button onClick={submit} disabled={loading || !url.trim()} className="mt-2 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-white font-bold text-slate-950 transition hover:bg-indigo-50 disabled:cursor-wait disabled:opacity-60">
+                  {loading ? <Loader2 className="animate-spin" size={18}/> : <Download size={18}/>}
+                  {loading ? "Inspecting..." : "Inspect & continue"} <ArrowRight size={16}/>
+                </button>
+
+                <div className="mt-3 flex items-center justify-between rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2 text-[11px]">
+                  <span className="text-slate-500">Status</span>
+                  <span className={error ? "text-rose-300" : transferState==="complete" ? "text-emerald-300" : "text-indigo-200"}>{error ? "Action required" : transferState==="complete" ? "Complete" : progressLabel}</span>
+                </div>
+
+                {(loading || progress > 0 || downloadMeta) && (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3 text-left">
+                    <div className="mb-2 flex items-center justify-between text-xs">
+                      <span className="truncate pr-3 text-slate-400">{progressLabel}</span>
+                      <span className="font-bold text-indigo-200">{progress}%</span>
                     </div>
-                    {downloadEta > 0 && <p className="mt-2 text-slate-500">ETA {downloadEta}s · Range chunks 8 MB · Resume supported</p>}
-                    {(transferState === "downloading" || transferState === "paused") && (
-                      <div className="mt-3 flex gap-2">
-                        {transferState === "downloading" ? (
-                          <button onClick={pauseDownload} className="flex-1 rounded-xl border border-white/10 px-3 py-2 font-semibold hover:bg-white/5">Pause</button>
-                        ) : (
-                          <button onClick={resumeDownload} className="flex-1 rounded-xl bg-indigo-500 px-3 py-2 font-semibold hover:bg-indigo-400">Resume</button>
-                        )}
-                        <button onClick={cancelDownload} className="rounded-xl border border-rose-400/20 px-4 py-2 font-semibold text-rose-200 hover:bg-rose-500/10">Cancel</button>
-                      </div>
-                    )}
+                    <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                      <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 transition-all duration-300" style={{width: progress+"%"}}/>
+                    </div>
+                    {downloadMeta && <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <div className="rounded-xl bg-white/[0.03] p-2"><span className="block text-[10px] text-slate-600">FILE</span><b className="block truncate text-xs">{downloadMeta.filename || "Preparing..."}</b></div>
+                      <div className="rounded-xl bg-white/[0.03] p-2"><span className="block text-[10px] text-slate-600">TYPE</span><b className="text-xs">{String(downloadMeta.extension || "—").toUpperCase()}</b></div>
+                      <div className="rounded-xl bg-white/[0.03] p-2"><span className="block text-[10px] text-slate-600">SIZE</span><b className="text-xs">{downloadMeta.sizeBytes ? formatBytes(Number(downloadMeta.sizeBytes)) : "Calculating"}</b></div>
+                      <div className="rounded-xl bg-white/[0.03] p-2"><span className="block text-[10px] text-slate-600">SPEED</span><b className="text-xs">{downloadSpeed ? formatBytes(downloadSpeed)+"/s" : "—"}</b></div>
+                    </div>}
+                    {downloadMeta && (downloadEta > 0 || downloadMeta.etaSeconds > 0) && <div className="mt-2 flex items-center gap-3 text-[11px] text-slate-500"><span><Gauge className="mr-1 inline" size={12}/> Live transfer</span><span><Clock3 className="mr-1 inline" size={12}/> ETA {formatEta(downloadEta || downloadMeta.etaSeconds)}</span></div>}
+                    {(transferState==="downloading" || transferState==="paused") && <div className="mt-3 flex gap-2">
+                      <button onClick={transferState==="downloading" ? pauseDownload : resumeDownload} className="flex-1 rounded-xl bg-indigo-500 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-400">
+                        {transferState==="downloading" ? <><Pause className="mr-1 inline" size={14}/> Pause</> : <><Play className="mr-1 inline" size={14}/> Resume</>}
+                      </button>
+                      <button onClick={cancelDownload} className="rounded-xl border border-rose-400/20 px-4 py-2 text-xs font-bold text-rose-200 hover:bg-rose-500/10">Cancel</button>
+                    </div>}
                   </div>
                 )}
+                {error && <div role="alert" className="mt-3 rounded-2xl border border-rose-400/20 bg-rose-500/10 p-3 text-left">
+                  <div className="flex items-start gap-2"><AlertCircle className="mt-0.5 shrink-0 text-rose-300" size={17}/><div className="min-w-0 flex-1"><p className="text-xs font-bold text-rose-200">Something went wrong</p><p className="mt-1 text-xs leading-5 text-rose-200/70">{error}</p></div><button onClick={retry} disabled={loading} className="rounded-lg border border-rose-300/20 px-2 py-1 text-[11px] font-semibold text-rose-100">Retry</button></div>
+                </div>}
+                {message && !error && <div className="mt-3 rounded-2xl border border-emerald-400/15 bg-emerald-400/5 p-3 text-xs text-emerald-200"><Check className="mr-2 inline" size={15}/>{message}</div>}
               </div>
-            )}
-
-            {error && (
-              <div role="alert" className="mt-3 flex items-start gap-3 rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-left text-sm text-rose-200">
-                <AlertCircle className="mt-0.5 shrink-0" size={18} />
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold">Request failed</p>
-                  <p className="mt-1 text-rose-200/75">{error}</p>
-                </div>
-                <button onClick={retry} disabled={loading} className="rounded-lg border border-rose-300/20 px-2.5 py-1.5 text-xs font-semibold hover:bg-rose-400/10">Retry</button>
-              </div>
-            )}
-
-            {message && !error && (
-              <div className="mt-3 flex items-start gap-3 rounded-2xl border border-emerald-400/15 bg-emerald-400/5 px-4 py-3 text-left text-sm text-emerald-200">
-                <Check className="mt-0.5 shrink-0" size={18} />
-                <span>{message}</span>
-              </div>
-            )}
-          </div>
-
-          <div className="mt-5 flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs text-slate-500">
-            <span className="flex items-center gap-1.5"><ShieldCheck size={14} /> Secure processing</span>
-            <span className="flex items-center gap-1.5"><Zap size={14} /> Fast workflow</span>
-            <span className="flex items-center gap-1.5"><Globe size={14} /> Cross-device</span>
+            </div>
           </div>
         </section>
 
