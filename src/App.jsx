@@ -507,7 +507,6 @@ export default function App() {
     setError("");
     setMessage("");
 
-    const youtube = isYouTube(url);
     const media = detectedMedia.find((item) => item.url === selectedMediaUrl)
       || detectedMedia.find((item) => item.type === "video" || item.type === "audio");
 
@@ -515,56 +514,85 @@ export default function App() {
       setError("Inspect the URL first. No downloadable format is available.");
       return;
     }
-    if (!youtube && !availableFormats.length && media && media.type !== "video" && media.type !== "audio") {
-      setError("This source is an embed or stream page, not a direct downloadable media file.");
-      return;
-    }
 
     try {
       setLoading(true);
       setError("");
-      setProgress(5);
-      setTransferState("preparing");
-      setProgressLabel("Creating download job...");
+      setProgress(0);
+      setTransferState("downloading");
+      setProgressLabel("Starting Chrome download...");
 
       if (availableFormats.length) {
         const audioOnly = format === "MP3";
         const selected = availableFormats.find((x) => x.id === quality && (audioOnly ? x.hasAudio : x.hasVideo))
           || availableFormats.find((x) => audioOnly ? x.hasAudio : x.hasVideo)
           || availableFormats[0];
-        const workerFormat = audioOnly ? "bestaudio" : (selected?.selector || "bv*+ba/b");
-        const jobResponse = await fetch("/api/ytdlp/jobs", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: url.trim(), format: workerFormat, audio_only: audioOnly })
-        });
-        const jobData = await jobResponse.json().catch(() => null);
-        if (!jobResponse.ok || !jobData?.id) throw new Error(jobData?.error || "Could not create download job.");
+        const selector = audioOnly ? "ba/b" : (selected?.selector || "bv*+ba/b");
+        const title = String(info?.title || "downly-download")
+          .replace(/[\\/:*?"<>|]+/g, " ")
+          .replace(/\\s+/g, " ")
+          .trim()
+          .slice(0, 140) || "downly-download";
+        const filename = title + (audioOnly ? ".mp3" : ".mp4");
 
-        const jobId = jobData.id;
-        activeJobRef.current = { jobId };
-        const status = await waitForWorkerReady(jobId);
-        const result = await startBrowserTransfer(jobId, status, audioOnly);
-        saveHistory({ url: url.trim(), title: info?.title || "Media download", thumbnail: info?.thumbnail, format: audioOnly ? "MP3" : "MP4", quality: selected?.label || "Best", createdAt: new Date().toISOString(), resumable: true, jobId, filename: result.filename, sizeBytes: result.total });
+        const params = new URLSearchParams({
+          url: url.trim(),
+          format: selector,
+          audio_only: audioOnly ? "true" : "false",
+          filename
+        });
+        const href = "/api/ytdlp/stream?" + params.toString();
+
+        const anchor = document.createElement("a");
+        anchor.href = href;
+        anchor.download = filename;
+        anchor.rel = "noopener";
+        anchor.style.display = "none";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+
+        setProgressLabel("Chrome Downloads · receiving media");
+        setMessage("Download started in Chrome Downloads. The webpage is not buffering the file.");
+        saveHistory({
+          url: url.trim(),
+          title: info?.title || "Media download",
+          thumbnail: info?.thumbnail,
+          format: audioOnly ? "MP3" : "MP4",
+          quality: selected?.label || "Best",
+          createdAt: new Date().toISOString(),
+          resumable: false,
+          filename,
+          sizeBytes: selected?.filesize || 0
+        });
+        setLoading(false);
         return;
       }
 
-      const parsed = new URL(media.url);
-      if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("Only public HTTP(S) media URLs are supported.");
-      const anchor = document.createElement("a");
-      anchor.href = media.url;
-      anchor.download = "";
-      anchor.rel = "noopener";
-      anchor.target = "_blank";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      setProgress(100);
-      setTransferState("complete");
-      setLoading(false);
-      setProgressLabel("Download sent to browser");
-      setMessage("Download request sent to Chrome. Check your Downloads.");
-      saveHistory({ url: media.url, title: info?.title || "Downloaded media", thumbnail: info?.thumbnail, format: mediaLabel(media), quality: "Source", createdAt: new Date().toISOString() });
+      if (media?.url) {
+        const filename = ((info?.title || "downly-download").replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 140) || "downly-download")
+          + (media.type === "audio" ? ".mp3" : ".mp4");
+        const params = new URLSearchParams({
+          url: media.url,
+          format: "best",
+          audio_only: media.type === "audio" ? "true" : "false",
+          filename
+        });
+        const anchor = document.createElement("a");
+        anchor.href = "/api/ytdlp/stream?" + params.toString();
+        anchor.download = filename;
+        anchor.rel = "noopener";
+        anchor.style.display = "none";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setProgressLabel("Chrome Downloads · receiving media");
+        setMessage("Download started in Chrome Downloads.");
+        setLoading(false);
+        return;
+      }
+
+      throw new Error("No downloadable media source was found.");
     } catch (e) {
       setProgress(0);
       setTransferState("error");
@@ -789,7 +817,7 @@ export default function App() {
                       );
                     })}
                   </div>
-                  <p className="mt-2 text-[11px] leading-5 text-slate-500">Downloads are handed to the browser's native Downloads manager. The worker prepares the media; Chrome handles the actual file transfer.</p>
+                  <p className="mt-2 text-[11px] leading-5 text-slate-500">Clicking Download opens a native attachment response so Chrome's Downloads manager receives the bytes directly. Downly does not first save the finished file on the worker.</p>
                 </div>
               )}
               <button onClick={handleDownload} disabled={loading || (!availableFormats.length && !detectedMedia.some((item) => item.url === selectedMediaUrl && (item.type === "video" || item.type === "audio")))} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 font-bold transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50">
