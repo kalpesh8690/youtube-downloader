@@ -28,8 +28,8 @@ function fileExtension(value) {
 }
 
 function mediaLabel(item) {
-  const ext = fileExtension(item.url);
-  if (item.type === "stream") return "STREAM";
+  const ext = String(item.ext || fileExtension(item.url)).toUpperCase();
+  if (item.type === "stream") return ext || "STREAM";
   if (item.type === "embed") return "EMBED";
   return ext || item.type.toUpperCase();
 }
@@ -141,7 +141,10 @@ export default function App() {
     try { parsed = new URL(value); } catch { return; }
     if (!["http:", "https:"].includes(parsed.protocol)) return;
     const timer = setTimeout(() => inspectMediaUrl(value, true), 650);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      inspectAbortRef.current?.abort();
+    };
   }, [url]);
 
   const saveHistory = (item) => {
@@ -556,7 +559,9 @@ export default function App() {
           .replace(/\\s+/g, " ")
           .trim()
           .slice(0, 140) || "downly-download";
-        const filename = title + (audioOnly ? ".mp3" : ".mp4");
+        const selectedExt = String(selected?.ext || "").toLowerCase();
+        const outputExt = audioOnly ? "mp3" : (directUrl && /^[a-z0-9]{2,5}$/.test(selectedExt) ? selectedExt : "mp4");
+        const filename = title + "." + outputExt;
 
         const href = "/api/ytdlp/stream?" + new URLSearchParams({
           url: url.trim(),
@@ -600,15 +605,18 @@ export default function App() {
       }
 
       if (media?.url) {
-        const filename = ((info?.title || "downly-download").replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 140) || "downly-download")
-          + (media.type === "audio" ? ".mp3" : ".mp4");
-        const isDirect = /\.(?:mp4|webm|m4v|mov|mkv|mp3|m4a)(?:$|\?)/i.test(media.url);
+        const ext = String(media.ext || fileExtension(media.url)).toLowerCase();
+        const isAudioMp3 = media.type === "audio" && ext === "mp3";
+        const needsMp3Conversion = media.type === "audio" && !isAudioMp3;
+        const isDirect = /\.(?:mp4|webm|m4v|mov|mkv|mp3|m4a|aac|wav|ogg|flac)(?:$|\?)/i.test(media.url);
+        const outputExt = needsMp3Conversion ? "mp3" : (ext || (media.type === "audio" ? "mp3" : "mp4"));
+        const filename = ((info?.title || "downly-download").replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 140) || "downly-download") + "." + outputExt;
         const href = "/api/ytdlp/stream?" + new URLSearchParams({
-          url: url.trim(),
-          direct_url: isDirect ? media.url : "",
+          url: isDirect ? url.trim() : media.url,
+          direct_url: isDirect && !needsMp3Conversion ? media.url : "",
           referer: url.trim(),
           format: "best",
-          audio_only: media.type === "audio" ? "true" : "false",
+          audio_only: needsMp3Conversion ? "true" : "false",
           filename
         }).toString();
         const anchor = document.createElement("a");
@@ -767,7 +775,7 @@ export default function App() {
               <div className="aspect-video overflow-hidden rounded-2xl bg-gradient-to-br from-slate-800 to-slate-950 p-1">
                 {info?.thumbnail ? <img src={info.thumbnail} alt="" className="h-full w-full rounded-xl object-cover" /> : <div className="flex h-full items-center justify-center rounded-xl border border-white/5"><Play className="fill-white text-white" size={28} /></div>}
               </div>
-              <div className="mt-4 line-clamp-2 text-sm font-semibold text-white">{info?.title || "Video preview"}</div>
+              <div className="mt-4 line-clamp-2 text-sm font-semibold text-white">{info?.title || "Paste a URL to inspect media"}</div>
               {scanMeta.count > 0 && (
                 <div className="mt-4 grid grid-cols-3 gap-2">
                   <div className="rounded-xl border border-white/10 bg-black/20 px-2 py-2 text-center">
@@ -839,7 +847,7 @@ export default function App() {
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Detected media sources</p>
                   <div className="grid gap-2">
                     {detectedMedia.map((item, index) => {
-                      const direct = item.type === "video" || item.type === "audio";
+                      const direct = item.type === "video" || item.type === "audio" || item.type === "stream";
                       return (
                         <button
                           type="button"
@@ -849,7 +857,7 @@ export default function App() {
                           className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left text-xs transition disabled:cursor-not-allowed disabled:opacity-40 ${selectedMediaUrl === item.url ? "border-indigo-400/60 bg-indigo-500/10 text-indigo-100" : "border-white/10 bg-black/20 text-slate-300"}`}
                         >
                           <span className="min-w-0 truncate"><span className="font-bold">{mediaLabel(item)}</span> · {safeHostname(item.url)}</span>
-                          <span className="shrink-0">{direct ? (selectedMediaUrl === item.url ? "Selected" : "Select") : "Detected only"}</span>
+                          <span className="shrink-0">{direct ? (selectedMediaUrl === item.url ? "Selected" : "Select") : "Preview only"}</span>
                         </button>
                       );
                     })}
