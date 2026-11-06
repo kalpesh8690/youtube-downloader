@@ -18,6 +18,23 @@ function safeHostname(value) {
   try { return new URL(value).hostname; } catch { return "Invalid media URL"; }
 }
 
+function fileExtension(value) {
+  try {
+    const pathname = new URL(value).pathname;
+    const match = pathname.match(/\.([a-z0-9]{2,5})$/i);
+    return match ? match[1].toUpperCase() : "";
+  } catch {
+    return "";
+  }
+}
+
+function mediaLabel(item) {
+  const ext = fileExtension(item.url);
+  if (item.type === "stream") return "STREAM";
+  if (item.type === "embed") return "EMBED";
+  return ext || item.type.toUpperCase();
+}
+
 function isYouTube(value) {
   try {
     const u = new URL(value);
@@ -62,6 +79,7 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [detectedMedia, setDetectedMedia] = useState([]);
   const [selectedMediaUrl, setSelectedMediaUrl] = useState("");
+  const [scanMeta, setScanMeta] = useState({ pagesScanned: 0, count: 0, directCount: 0, streamCount: 0, partial: false });
 
   const valid = useMemo(() => { try { const u = new URL(url); return u.protocol === "http:" || u.protocol === "https:"; } catch { return false; } }, [url]);
 
@@ -104,6 +122,7 @@ export default function App() {
     setInfo(null);
     setDetectedMedia([]);
     setSelectedMediaUrl("");
+    setScanMeta({ pagesScanned: 0, count: 0, directCount: 0, streamCount: 0, partial: false });
     setProgress(10);
     setProgressLabel("Inspecting URL...");
 
@@ -120,6 +139,7 @@ export default function App() {
         if (!response.ok) throw new Error(friendlyError(data?.error, response.status));
         if (!data || data.ok !== true) throw new Error(data?.error || "The video details API returned an invalid response.");
         setInfo(data);
+        setScanMeta({ pagesScanned: 1, count: 0, directCount: 0, streamCount: 0, partial: false });
         setProgress(100);
         setProgressLabel("Details loaded");
         setMessage(data.note || "Video details loaded. Protected YouTube media streams are not extracted.");
@@ -142,6 +162,13 @@ export default function App() {
         : [];
       setInfo({ title: data.title || safeHostname(data.pageUrl || value), author: safeHostname(data.pageUrl || value), thumbnail: null });
       setDetectedMedia(media);
+      setScanMeta({
+        pagesScanned: Number(data.pagesScanned) || 1,
+        count: Number(data.count) || media.length,
+        directCount: Number(data.directCount) || media.filter((item) => item.type === "video" || item.type === "audio").length,
+        streamCount: Number(data.streamCount) || media.filter((item) => item.type === "stream").length,
+        partial: Boolean(data.partial)
+      });
       const firstDirect = media.find((item) => item.type === "video" || item.type === "audio");
       setSelectedMediaUrl(firstDirect?.url || "");
       setProgress(100);
@@ -150,6 +177,7 @@ export default function App() {
     } catch (e) {
       setProgress(0);
       setProgressLabel("Ready");
+      setProgress(0);
       setError(e?.message || "Unable to inspect this URL.");
     } finally {
       setLoading(false);
@@ -320,6 +348,22 @@ export default function App() {
                 {info?.thumbnail ? <img src={info.thumbnail} alt="" className="h-full w-full rounded-xl object-cover" /> : <div className="flex h-full items-center justify-center rounded-xl border border-white/5"><Play className="fill-white text-white" size={28} /></div>}
               </div>
               <div className="mt-4 line-clamp-2 text-sm font-semibold text-white">{info?.title || "Video preview"}</div>
+              {scanMeta.count > 0 && (
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  <div className="rounded-xl border border-white/10 bg-black/20 px-2 py-2 text-center">
+                    <div className="text-sm font-bold text-white">{scanMeta.count}</div>
+                    <div className="text-[10px] text-slate-500">FOUND</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 px-2 py-2 text-center">
+                    <div className="text-sm font-bold text-emerald-300">{scanMeta.directCount}</div>
+                    <div className="text-[10px] text-slate-500">DIRECT</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 px-2 py-2 text-center">
+                    <div className="text-sm font-bold text-indigo-300">{scanMeta.pagesScanned}</div>
+                    <div className="text-[10px] text-slate-500">PAGES</div>
+                  </div>
+                </div>
+              )}
               <div className="mt-2 text-xs text-slate-500">{info?.author || "Scan a website or paste a direct media URL"}</div>
             </div>
 
@@ -328,6 +372,11 @@ export default function App() {
                 <div><p className="text-sm font-bold">Download settings</p><p className="mt-1 text-xs text-slate-500">Stream the original source file without buffering it in app memory.</p></div>
                 <TrendingDown className="text-slate-600" size={20} />
               </div>
+              {isYouTube(url) && info?.note && (
+                <div className="mt-6 rounded-2xl border border-amber-400/15 bg-amber-400/5 px-4 py-3 text-xs leading-5 text-amber-200">
+                  <span className="font-bold">YouTube:</span> {info.note}
+                </div>
+              )}
               <div className="mt-7 grid gap-4 sm:grid-cols-2">
                 <label className="block text-xs font-semibold text-slate-400">FORMAT
                   <select value={format} onChange={(e) => setFormat(e.target.value)} className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-white outline-none focus:border-indigo-400/50">
@@ -354,18 +403,18 @@ export default function App() {
                           onClick={() => setSelectedMediaUrl(item.url)}
                           className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left text-xs transition disabled:cursor-not-allowed disabled:opacity-40 ${selectedMediaUrl === item.url ? "border-indigo-400/60 bg-indigo-500/10 text-indigo-100" : "border-white/10 bg-black/20 text-slate-300"}`}
                         >
-                          <span className="min-w-0 truncate">{item.type.toUpperCase()} · {safeHostname(item.url)}</span>
-                          <span className="shrink-0">{direct ? (selectedMediaUrl === item.url ? "Selected" : "Select") : "Not downloadable"}</span>
+                          <span className="min-w-0 truncate"><span className="font-bold">{mediaLabel(item)}</span> · {safeHostname(item.url)}</span>
+                          <span className="shrink-0">{direct ? (selectedMediaUrl === item.url ? "Selected" : "Select") : "Detected only"}</span>
                         </button>
                       );
                     })}
                   </div>
-                  <p className="mt-2 text-[11px] leading-5 text-slate-500">Only direct public media files are supported. Protected streams and player-only sources are not extracted.</p>
+                  <p className="mt-2 text-[11px] leading-5 text-slate-500">Direct files are downloadable in their original format. STREAM/EMBED entries are detected for visibility but are not extracted or converted.</p>
                 </div>
               )}
-              <button onClick={handleDownload} disabled={loading} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 font-bold transition hover:bg-indigo-400 disabled:opacity-60">
+              <button onClick={handleDownload} disabled={loading || !selectedMediaUrl || !detectedMedia.some((item) => item.url === selectedMediaUrl && (item.type === "video" || item.type === "audio"))} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 font-bold transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50">
                 {loading ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
-                {loading ? "Preparing..." : `Download original media`}
+                {loading ? "Starting..." : selectedMediaUrl ? "Download selected media" : "Select direct media to download"}
               </button>
             </div>
           </div>
