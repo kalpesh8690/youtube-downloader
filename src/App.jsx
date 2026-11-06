@@ -237,6 +237,24 @@ export default function App() {
   };
   const retry = () => submit();
 
+  const submitNativeDownload = (values) => {
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = "/api/ytdlp/stream";
+    form.enctype = "application/x-www-form-urlencoded";
+    form.style.display = "none";
+    for (const [name, value] of Object.entries(values)) {
+      const field = document.createElement("input");
+      field.type = "hidden";
+      field.name = name;
+      field.value = String(value ?? "");
+      form.appendChild(field);
+    }
+    document.body.appendChild(form);
+    form.submit();
+    form.remove();
+  };
+
   const pasteFromClipboard = async () => {
     try {
       const value = await navigator.clipboard.readText();
@@ -300,23 +318,14 @@ export default function App() {
         const outputExt = audioOnly ? "mp3" : (directUrl && /^[a-z0-9]{2,5}$/.test(selectedExt) ? selectedExt : "mp4");
         const filename = title + "." + outputExt;
 
-        const href = "/api/ytdlp/stream?" + new URLSearchParams({
+        submitNativeDownload({
           url: url.trim(),
           direct_url: directUrl || "",
           referer: info?.webpageUrl || url.trim(),
           format: selector,
           audio_only: audioOnly ? "true" : "false",
           filename
-        }).toString();
-
-        const anchor = document.createElement("a");
-        anchor.href = href;
-        anchor.download = filename;
-        anchor.rel = "noopener";
-        anchor.style.display = "none";
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
+        });
 
         setTransferState("browser");
         setProgress(0);
@@ -348,22 +357,14 @@ export default function App() {
         const isDirect = /\.(?:mp4|webm|m4v|mov|mkv|mp3|m4a|aac|wav|ogg|flac)(?:$|\?)/i.test(media.url);
         const outputExt = needsMp3Conversion ? "mp3" : (ext || (media.type === "audio" ? "mp3" : "mp4"));
         const filename = ((info?.title || "downly-download").replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 140) || "downly-download") + "." + outputExt;
-        const href = "/api/ytdlp/stream?" + new URLSearchParams({
+        submitNativeDownload({
           url: isDirect && !needsMp3Conversion ? url.trim() : media.url,
           direct_url: isDirect && !needsMp3Conversion ? media.url : "",
           referer: url.trim(),
           format: "best",
           audio_only: needsMp3Conversion ? "true" : "false",
           filename
-        }).toString();
-        const anchor = document.createElement("a");
-        anchor.href = href;
-        anchor.download = filename;
-        anchor.rel = "noopener";
-        anchor.style.display = "none";
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
+        });
         setTransferState("browser");
         setProgress(0);
         setProgressLabel("Chrome Downloads · download requested");
