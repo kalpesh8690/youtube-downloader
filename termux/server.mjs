@@ -179,6 +179,9 @@ if(u.pathname==="/api/ytdlp/stream"&&req.method==="GET"){
   const mediaUrl=u.searchParams.get("url");
   if(!mediaUrl)return json(res,400,{ok:false,error:"url is required"});
   if(!rateAllowed(req,"stream",8))return json(res,429,{ok:false,error:"Download start limit reached. Please wait and retry.",code:"RATE_LIMITED"});
+  const controller=new AbortController();
+  req.on("aborted",()=>controller.abort());
+  res.on("close",()=>{if(!res.writableEnded)controller.abort();});
   try{
     const values={
       url:mediaUrl,
@@ -188,17 +191,28 @@ if(u.pathname==="/api/ytdlp/stream"&&req.method==="GET"){
       audio_only:u.searchParams.get("audio_only")==="true"?"true":"false",
       filename:u.searchParams.get("filename")||""
     };
-    const upstream=await workerFetch("/v1/stream?"+new URLSearchParams(values).toString(),{method:"GET"});
+    const upstream=await workerFetch("/v1/stream?"+new URLSearchParams(values).toString(),{method:"GET",signal:controller.signal});
     const headers={...securityHeaders};
     for(const name of ["content-type","content-disposition","cache-control","accept-ranges","content-length","content-range"]){
       const value=upstream.headers.get(name);if(value)headers[name]=value;
     }
     res.writeHead(upstream.status,headers);
     if(!upstream.body)return res.end();
-    for await(const chunk of upstream.body)res.write(Buffer.from(chunk));
+    for await(const chunk of upstream.body){
+      if(!res.write(Buffer.from(chunk))){
+        await new Promise((resolve,reject)=>{
+          const onDrain=()=>{cleanup();resolve();};
+          const onClose=()=>{cleanup();reject(new Error("Download client disconnected"));};
+          const cleanup=()=>{res.off("drain",onDrain);res.off("close",onClose);};
+          res.once("drain",onDrain);
+          res.once("close",onClose);
+        });
+      }
+    }
     return res.end();
   }catch(e){
-    console.error("[stream-proxy] error="+(e?.stack||e));
+    if(controller.signal.aborted)return;
+    console.error("[stream-proxy] "+(e?.message||"stream failed"));
     if(!res.headersSent)return json(res,502,{ok:false,error:"Direct download stream unavailable",code:"STREAM_PROXY_ERROR"});
     res.destroy();
   }
@@ -260,6 +274,6 @@ if(u.pathname==="/api/youtube/info"&&(req.method==="GET"||req.method==="POST")){
   try{return json(res,200,await inspectMedia(body?.url));}
   catch(e){return json(res,422,{ok:false,error:e?.message||"Unable to inspect YouTube URL",code:"MEDIA_INSPECT_ERROR"});}
 }
-return staticFile(req,res);}catch(e){console.error("[api-error]",req.method,req.url,e?.stack||e);json(res,502,{ok:false,error:e?.message||"Termux server error",code:"TERMUX_API_ERROR"});}});
+return staticFile(req,res);}catch(e){console.error("[api-error]",req.method,new URL(req.url,"http://localhost").pathname,e?.stack||e);json(res,502,{ok:false,error:e?.message||"Termux server error",code:"TERMUX_API_ERROR"});}});
 async function workerDownloadLegacy(res,body){if(!WORKER_TOKEN)return json(res,503,{ok:false,error:"YTDLP_WORKER_TOKEN is not configured"});const upstream=await fetch(WORKER_URL+"/v1/media/download",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+WORKER_TOKEN},body:JSON.stringify(body)});const headers={"Content-Type":upstream.headers.get("content-type")||"application/octet-stream","Cache-Control":"no-store"};for(const h of ["content-disposition","content-length"])if(upstream.headers.get(h))headers[h[0].toUpperCase()+h.slice(1)]=upstream.headers.get(h);res.writeHead(upstream.status,headers);if(!upstream.body)return res.end();for await(const chunk of upstream.body)res.write(Buffer.from(chunk));res.end();}
 server.listen(PORT,HOST,()=>console.log("[startup] Downly Termux frontend http://127.0.0.1:"+PORT+" | worker="+WORKER_URL+" | token="+(WORKER_TOKEN?"configured":"MISSING")+" | resumable=true"));
