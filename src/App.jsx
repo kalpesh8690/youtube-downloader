@@ -625,7 +625,7 @@ export default function App() {
                     {downloadMeta && <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                       <div className="rounded-xl bg-white/[0.03] p-2"><span className="block text-[10px] text-slate-600">FILE</span><b className="block truncate text-xs">{downloadMeta.filename || "Preparing..."}</b></div>
                       <div className="rounded-xl bg-white/[0.03] p-2"><span className="block text-[10px] text-slate-600">TYPE</span><b className="text-xs">{String(downloadMeta.extension || "—").toUpperCase()}</b></div>
-                      <div className="rounded-xl bg-white/[0.03] p-2"><span className="block text-[10px] text-slate-600">SIZE</span><b className="text-xs">{downloadMeta.sizeBytes ? formatBytes(Number(downloadMeta.sizeBytes)) : "Calculating"}</b></div>
+                      <div className="rounded-xl bg-white/[0.03] p-2"><span className="block text-[10px] text-slate-600">SIZE</span><b className="text-xs">{(downloadMeta.sizeBytes || downloadMeta.totalBytes) ? formatBytes(Number(downloadMeta.sizeBytes || downloadMeta.totalBytes)) : "Calculating"}</b></div>
                       <div className="rounded-xl bg-white/[0.03] p-2"><span className="block text-[10px] text-slate-600">SPEED</span><b className="text-xs">{downloadSpeed ? formatBytes(downloadSpeed)+"/s" : "—"}</b></div>
                     </div>}
                     {downloadMeta && (downloadEta > 0 || downloadMeta.etaSeconds > 0) && <div className="mt-2 flex items-center gap-3 text-[11px] text-slate-500"><span><Gauge className="mr-1 inline" size={12}/> Live transfer</span><span><Clock3 className="mr-1 inline" size={12}/> ETA {formatEta(downloadEta || downloadMeta.etaSeconds)}</span></div>}
