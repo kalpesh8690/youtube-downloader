@@ -73,13 +73,13 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [info, setInfo] = useState(null);
-  const [progress, setProgress] = useState(0);
   const [progressLabel, setProgressLabel] = useState("Ready");
   const [history, setHistory] = useState([]);
   const [detectedMedia, setDetectedMedia] = useState([]);
   const [selectedMediaUrl, setSelectedMediaUrl] = useState("");
   const [scanMeta, setScanMeta] = useState({ pagesScanned: 0, count: 0, directCount: 0, streamCount: 0, partial: false });
   const [transferState, setTransferState] = useState("idle");
+  const [workerStatus, setWorkerStatus] = useState("checking");
 
   useEffect(() => {
     try {
@@ -87,6 +87,29 @@ export default function App() {
     } catch {
       setHistory([]);
     }
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let controller;
+    const checkWorker = async () => {
+      controller?.abort();
+      controller = new AbortController();
+      try {
+        const response = await fetch("/api/health", { cache: "no-store", signal: controller.signal });
+        const data = await response.json().catch(() => null);
+        if (!disposed) setWorkerStatus(response.ok && data?.ok && data.worker === "online" ? "online" : "offline");
+      } catch (error) {
+        if (!disposed && error?.name !== "AbortError") setWorkerStatus("offline");
+      }
+    };
+    checkWorker();
+    const timer = window.setInterval(checkWorker, 30000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      controller?.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -144,7 +167,7 @@ export default function App() {
         setDetectedMedia([]);
         setSelectedMediaUrl("");
         setScanMeta({ pagesScanned: 1, count: data.formats.length, directCount: data.formats.length, streamCount: 0, partial: false });
-        setProgress(100);
+
         setProgressLabel("Media details ready");
         setInspectState("ready");
         setMessage((data.title ? "Ready: " + data.title : "Media details loaded.") + " · " + data.formats.length + " formats available.");
@@ -172,7 +195,7 @@ export default function App() {
         const first = media.find((item) => item.type === "video" || item.type === "audio");
         setSelectedMediaUrl(first?.url || media[0]?.url || "");
         setScanMeta({ pagesScanned: 1, count: media.length, directCount: media.filter((item) => item.type !== "stream").length, streamCount: media.filter((item) => item.type === "stream").length, partial: false });
-        setProgress(100);
+
         setProgressLabel("Page media scan ready");
         setInspectState("ready");
         setMessage("Found " + media.length + " media source(s) on this page.");
@@ -201,7 +224,7 @@ export default function App() {
         streamCount: Number(detect.streamCount) || media.filter((item) => item.type === "stream").length,
         partial: Boolean(detect.partial)
       });
-      setProgress(100);
+
       setProgressLabel("Media scan ready");
       setInspectState("ready");
       setMessage(media.length ? "Found " + media.length + " media source(s). Select a direct file to download." : "No downloadable media was found.");
@@ -209,7 +232,7 @@ export default function App() {
     } catch (e) {
       if (e?.name === "AbortError") return null;
       setInspectState("error");
-      setProgress(0);
+
       setProgressLabel("Inspection failed");
       setError(friendlyError(e?.message, 422));
       return null;
@@ -227,7 +250,7 @@ export default function App() {
     setLoading(true);
     setError("");
     setMessage("");
-    setProgress(15);
+
     setProgressLabel("Inspecting media...");
     try {
       await inspectMediaUrl(value, false);
@@ -277,7 +300,7 @@ export default function App() {
     setSelectedMediaUrl("");
     setError("");
     setMessage("");
-    setProgress(0);
+
     setProgressLabel("Ready");
     setTransferState("idle");
     setInspectState("idle");
@@ -298,7 +321,7 @@ export default function App() {
     try {
       setLoading(true);
       setError("");
-      setProgress(0);
+
       setTransferState("downloading");
       setProgressLabel("Starting Chrome download...");
 
@@ -328,7 +351,7 @@ export default function App() {
         });
 
         setTransferState("browser");
-        setProgress(0);
+
         setProgressLabel("Chrome Downloads · download requested");
         setMessage(directUrl
           ? "Direct source sent to Chrome Downloads. This page does not buffer the file."
@@ -366,7 +389,7 @@ export default function App() {
           filename
         });
         setTransferState("browser");
-        setProgress(0);
+
         setProgressLabel("Chrome Downloads · download requested");
         setMessage(isDirect
           ? "Direct media sent to Chrome Downloads. Downly does not buffer the file."
@@ -377,7 +400,7 @@ export default function App() {
 
       throw new Error("No downloadable media source was found.");
     } catch (e) {
-      setProgress(0);
+
       setTransferState("error");
       setProgressLabel("Download failed");
       setError(e?.message || "Unable to start this download.");
@@ -436,9 +459,9 @@ export default function App() {
                 Paste a public media URL, inspect it, choose the format, and manage the download with live progress, pause, resume and cancellation.
               </p>
               <div className="mt-7 flex flex-wrap gap-2 text-[11px] text-slate-500">
-                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5"><ShieldCheck className="mr-1 inline" size={12}/> On-device worker</span>
-                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5"><Gauge className="mr-1 inline" size={12}/> Live speed</span>
-                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5"><RefreshCw className="mr-1 inline" size={12}/> Resume</span>
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5" aria-live="polite"><span className={workerStatus==="online" ? "mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" : "mr-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400"}/>{workerStatus==="online" ? "Worker online" : workerStatus==="checking" ? "Checking worker" : "Worker offline"}</span>
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5"><Download className="mr-1 inline" size={12}/> Native Chrome downloads</span>
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5"><RefreshCw className="mr-1 inline" size={12}/> Media crawler</span>
               </div>
             </div>
 
@@ -467,7 +490,7 @@ export default function App() {
 
                 <div className="mt-3 flex items-center justify-between rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2 text-[11px]">
                   <span className="text-slate-500">Status</span>
-                  <span className={error ? "text-rose-300" : transferState==="browser" ? "text-emerald-300" : "text-indigo-200"}>{error ? "Action required" : transferState==="browser" ? "Sent to Chrome Downloads" : progressLabel}</span>
+                  <span className={error ? "text-rose-300" : transferState==="browser" ? "text-emerald-300" : "text-indigo-200"}>{error ? "Action required" : transferState==="browser" ? "Sent to Chrome Downloads" : workerStatus==="offline" && inspectState==="idle" ? "Worker unavailable" : progressLabel}</span>
                 </div>
 
                 {inspectState === "loading" && (
@@ -527,7 +550,7 @@ export default function App() {
 
             <div className="glass rounded-3xl p-5 md:col-span-2">
               <div className="flex items-center justify-between">
-                <div><p className="text-sm font-bold">Download settings</p><p className="mt-1 text-xs text-slate-500">Start a native Chrome download. Direct source files are proxied byte-for-byte; conversion happens only when needed.</p></div>
+                <div><p className="text-sm font-bold">Download settings</p><p className="mt-1 text-xs text-slate-500">Start a native Chrome download. Direct public files are proxied without a completed worker-side copy; conversion is used only when needed.</p></div>
                 <TrendingDown className="text-slate-600" size={20} />
               </div>
               {isYouTube(url) && info?.note && (
