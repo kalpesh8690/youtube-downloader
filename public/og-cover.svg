@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#080c1a"/><stop offset="1" stop-color="#19103a"/></linearGradient><linearGradient id="a" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#818cf8"/><stop offset="1" stop-color="#e879f9"/></linearGradient></defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="970" cy="100" r="250" fill="#7c3aed" opacity=".16"/>
+  <circle cx="150" cy="570" r="270" fill="#4f46e5" opacity=".16"/>
+  <rect x="92" y="96" width="74" height="74" rx="22" fill="url(#a)"/>
+  <path d="M129 111v35m-14-14 14 14 14-14M111 151v8h36v-8" fill="none" stroke="white" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="190" y="151" font-family="Inter,Arial,sans-serif" font-size="46" font-weight="800" fill="white">Downly</text>
+  <text x="92" y="310" font-family="Inter,Arial,sans-serif" font-size="78" font-weight="800" fill="white">Your media.</text>
+  <text x="92" y="405" font-family="Inter,Arial,sans-serif" font-size="78" font-weight="800" fill="url(#a)">Your download control.</text>
+  <text x="96" y="475" font-family="Inter,Arial,sans-serif" font-size="27" fill="#a5b4fc">Inspect formats · Stream media · Download in your browser</text>
+</svg>
