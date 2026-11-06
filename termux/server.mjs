@@ -104,6 +104,52 @@ async function serveJobFile(req,res,id){
 }
 async function staticFile(req,res){const pathname=new URL(req.url,"http://localhost").pathname;if(pathname==="/health")return json(res,200,{ok:true,service:"downly-termux",port:PORT,worker:WORKER_URL,resumable:true});if(pathname.startsWith("/api/"))return json(res,404,{ok:false,error:"API route not found on Termux server"});const clean=pathname.replace(/^\/+/, "");const file=clean&&!clean.includes("..")?new URL(clean,DIST):new URL("index.html",DIST);try{const st=await fs.stat(file);if(!st.isFile())throw 0;const ext=file.pathname.match(/\.[^.]+$/)?.[0].toLowerCase()||"";res.writeHead(200,{"Content-Type":mime[ext]||"application/octet-stream","Cache-Control":ext===".html"?"no-cache":"public, max-age=31536000, immutable",...securityHeaders});createReadStream(file).pipe(res);}catch{try{const index=await fs.readFile(new URL("index.html",DIST));res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-cache",...securityHeaders});res.end(index);}catch{json(res,500,{ok:false,error:"Run npm run build first"});}}}
 const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,"http://localhost");if(req.method==="OPTIONS")return res.writeHead(204).end();
+if(u.pathname==="/api/detect"&&(req.method==="GET"||req.method==="POST")){
+  let pageUrl=u.searchParams.get("url");
+  if(req.method==="POST"){
+    let body;try{body=await readJsonBody(req,8192);}catch(e){return json(res,e.statusCode||400,{ok:false,error:e.message});}
+    pageUrl=body?.url;
+  }
+  if(!pageUrl)return json(res,400,{ok:false,error:"url is required"});
+  if(!rateAllowed(req,"detect",15))return json(res,429,{ok:false,error:"Too many page scans. Please wait and retry.",code:"RATE_LIMITED"});
+  try{
+    const upstream=await workerFetch("/v1/crawl?"+new URLSearchParams({url:pageUrl}).toString(),{method:"GET"});
+    const data=await upstream.json().catch(()=>null);
+    if(!upstream.ok||!data?.ok)return json(res,upstream.status,{ok:false,error:data?.error||"Page scan failed"});
+    const items=Array.isArray(data.items)?data.items:[];
+    const media=items.map(item=>({
+      url:item.url,
+      type:item.kind==="hls"||item.kind==="dash"?"stream":String(item.mime||"").startsWith("audio/")?"audio":"video",
+      ext:item.extension,
+      mime:item.mime,
+      title:data.title
+    }));
+    return json(res,200,{
+      ok:true,
+      title:data.title,
+      pageUrl:data.pageUrl||pageUrl,
+      media,
+      count:media.length,
+      directCount:media.filter(item=>item.type!=="stream").length,
+      streamCount:media.filter(item=>item.type==="stream").length,
+      pagesScanned:Number(data.pagesScanned)||1,
+      partial:Boolean(data.partial)
+    });
+  }catch(e){
+    console.error("[media-detect] error="+(e?.stack||e));
+    return json(res,502,{ok:false,error:"Page media scan unavailable",code:"MEDIA_DETECT_ERROR"});
+  }
+}
+if(u.pathname==="/api/health"&&req.method==="GET"){
+  try{
+    const worker=await fetch(WORKER_URL+"/health",{signal:AbortSignal.timeout(3000)});
+    const data=await worker.json().catch(()=>null);
+    if(!worker.ok||!data?.ok)return json(res,503,{ok:false,service:"downly-termux",worker:"unavailable"});
+    return json(res,200,{ok:true,service:"downly-termux",worker:"online",workerVersion:data.version,maxStreams:data.maxStreams||null});
+  }catch{
+    return json(res,503,{ok:false,service:"downly-termux",worker:"offline"});
+  }
+}
 if(u.pathname==="/api/media/crawl"&&req.method==="GET"){
   const pageUrl=u.searchParams.get("url");
   if(!pageUrl)return json(res,400,{ok:false,error:"url is required"});
