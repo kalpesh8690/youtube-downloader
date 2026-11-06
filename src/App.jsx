@@ -14,6 +14,10 @@ const features = [
   ["Responsive", "A polished experience on phones and desktops.", Globe]
 ];
 
+function safeHostname(value) {
+  try { return new URL(value).hostname; } catch { return "Invalid media URL"; }
+}
+
 function isYouTube(value) {
   try {
     const u = new URL(value);
@@ -120,80 +124,78 @@ export default function App() {
   };
 
   const submit = async () => {
-    setMessage("");
-    setError("");
-    setInfo(null);
-    setDetectedMedia([]);
-    setSelectedMediaUrl("");
-    setProgress(0);
-
-    if (!url.trim()) {
-      setError("Paste a webpage or direct media URL to continue.");
+    const value = url.trim();
+    if (!value) {
+      setError("Paste a webpage or direct media URL first.");
       return;
     }
-    if (!valid) {
-      setError("Enter a valid HTTP(S) URL.");
+
+    let parsed;
+    try {
+      parsed = new URL(value);
+    } catch {
+      setError("Enter a complete URL starting with http:// or https://.");
+      return;
+    }
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      setError("Only HTTP(S) URLs are supported.");
       return;
     }
 
     setLoading(true);
-    setProgressLabel("Inspecting webpage...");
-    setProgress(18);
+    setError("");
+    setMessage("");
+    setInfo(null);
+    setDetectedMedia([]);
+    setSelectedMediaUrl("");
+    setProgress(10);
+    setProgressLabel("Inspecting URL...");
 
     try {
+      if (isYouTube(value)) {
+        setProgress(35);
+        setProgressLabel("Loading video details...");
+        const response = await fetch("/api/youtube/info", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ url: value })
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(friendlyError(data?.error, response.status));
+        if (!data || data.ok !== true) throw new Error(data?.error || "The video details API returned an invalid response.");
+        setInfo(data);
+        setProgress(100);
+        setProgressLabel("Details loaded");
+        setMessage(data.note || "Video details loaded. Protected YouTube media streams are not extracted.");
+        return;
+      }
+
+      setProgress(35);
+      setProgressLabel("Finding public media...");
       const response = await fetch("/api/detect", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ url: url.trim() })
+        body: JSON.stringify({ url: value })
       });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(friendlyError(data?.error, response.status));
+      if (!data || data.ok !== true) throw new Error(data?.error || "The media detector returned an invalid response.");
 
-      let data = null;
-      try { data = await response.json(); } catch { throw new Error("The detector returned an invalid response."); }
-      if (!response.ok || !data?.ok) throw new Error(friendlyError(data?.error, response.status));
-
-      setProgressLabel("Detecting public media sources...");
-      setProgress(65);
-      setDetectedMedia(data.media || []);
-      setSelectedMediaUrl((data.media || []).find((item) => item.type === "video" || item.type === "audio")?.url || "");
-
-      let metadata = null;
-      if (isYouTube(url)) {
-        const yt = await fetch("/api/youtube/info", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ url: url.trim() })
-        });
-        if (yt.ok) metadata = await yt.json();
-      }
-
-      setInfo(metadata || {
-        ok: true,
-        title: data.title || "Detected media",
-        author: new URL(data.pageUrl || url).hostname,
-        thumbnail: null,
-        watchUrl: data.pageUrl || url
-      });
+      const media = Array.isArray(data.media)
+        ? data.media.filter((item) => item && typeof item.url === "string" && ["video", "audio", "stream", "embed", "unknown"].includes(item.type))
+        : [];
+      setDetectedMedia(media);
+      const firstDirect = media.find((item) => item.type === "video" || item.type === "audio");
+      setSelectedMediaUrl(firstDirect?.url || "");
       setProgress(100);
-      setProgressLabel("Detection complete");
-
-      if ((data.media || []).length) {
-        setMessage(`Detected ${data.media.length} public media source(s). Select a direct audio/video file below to download.`);
-      } else {
-        setMessage("No public direct video/audio URL was exposed by this page. Protected, DRM, login-only and player-internal streams are not bypassed.");
-      }
-
-      saveHistory({
-        url: url.trim(),
-        title: metadata?.title || data.title || "Detected media",
-        thumbnail: metadata?.thumbnail,
-        format,
-        quality,
-        createdAt: new Date().toISOString()
-      });
+      setProgressLabel("Ready");
+      setMessage(media.length
+        ? \`Detected \${media.length} public media source(s). Select a direct audio/video file below to download.\`
+        : "No public direct media file was exposed by this webpage.");
     } catch (e) {
       setProgress(0);
-      setProgressLabel("Failed");
-      setError(e?.message || "Unable to inspect the URL.");
+      setProgressLabel("Ready");
+      setError(e?.message || "Unable to inspect this URL.");
     } finally {
       setLoading(false);
     }
@@ -397,7 +399,7 @@ export default function App() {
                           onClick={() => setSelectedMediaUrl(item.url)}
                           className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left text-xs transition disabled:cursor-not-allowed disabled:opacity-40 ${selectedMediaUrl === item.url ? "border-indigo-400/60 bg-indigo-500/10 text-indigo-100" : "border-white/10 bg-black/20 text-slate-300"}`}
                         >
-                          <span className="min-w-0 truncate">{item.type.toUpperCase()} · {new URL(item.url).hostname}</span>
+                          <span className="min-w-0 truncate">{item.type.toUpperCase()} · {safeHostname(item.url)}</span>
                           <span className="shrink-0">{direct ? (selectedMediaUrl === item.url ? "Selected" : "Select") : "Not downloadable"}</span>
                         </button>
                       );
