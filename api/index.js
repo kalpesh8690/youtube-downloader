@@ -1,0 +1,1 @@
+export default function handler(req,res){res.status(200).json({name:"Downly API",version:"1.0.0",endpoints:["POST /api/youtube/info","POST /api/download","GET /api/health"],note:"YouTube metadata is supported; media downloading is limited to authorized direct media sources."});}
