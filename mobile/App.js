@@ -74,8 +74,25 @@ export default function App(){
      }
      const destination=new File(Paths.document,clean(filename));
      if(destination.exists)destination.delete();
-     const t=File.createDownloadTask(streamUrl,destination,{onProgress:p=>{const tw=Number(p.totalBytes)||0;setWritten(p.bytesWritten);setTotal(tw);setProgress(tw>0?p.bytesWritten/tw*100:0);setStatus(tw>0?`Downloading · ${Math.round(p.bytesWritten/tw*100)}%`:`Downloading · ${bytes(p.bytesWritten)}`)},headers:{Accept:"*/*"}});
-     task.current=t;const file=await t.downloadAsync();if(!file)throw new Error("Download cancelled.");
+     const runDownload=async target=>{
+       const t=File.createDownloadTask(target,destination,{onProgress:p=>{const tw=Number(p.totalBytes)||0;setWritten(p.bytesWritten);setTotal(tw);setProgress(tw>0?p.bytesWritten/tw*100:0);setStatus(tw>0?`Downloading · ${Math.round(p.bytesWritten/tw*100)}%`:`Downloading · ${bytes(p.bytesWritten)}`)},headers:{Accept:"*/*"}});
+       task.current=t;
+       return await t.downloadAsync();
+     };
+     let file;
+     try{
+       file=await runDownload(streamUrl);
+     }catch(firstError){
+       if(backend==="Cloud worker"&&isYT(v)){
+         setStatus("Cloud blocked · trying local worker…");
+         try{
+           const localUrl=streamUrl.replace(API_BASE,LOCAL_API);
+           file=await runDownload(localUrl);
+           setBackend("Local Termux worker");
+         }catch(localError){throw localError}
+       }else throw firstError;
+     }
+     if(!file)throw new Error("Download cancelled.");
      const item={id:String(Date.now()),url:safeUrl(v),title:info?.title||filename,filename,size:file.size||written,uri:file.uri,time:new Date().toISOString(),format};
      await saveHistory(item);setProgress(100);setStatus(`Complete · ${bytes(item.size)}`);
      Alert.alert("Downly",`${filename}\\n\\nDownload complete.`,[{text:"Share",onPress:()=>share(file.uri)},{text:"Open",onPress:()=>open(file)},{text:"OK"}]);
