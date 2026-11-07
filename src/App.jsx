@@ -115,7 +115,7 @@ export default function App() {
       try {
         const response = await fetch("/api/health", { cache: "no-store", signal: controller.signal });
         const data = await response.json().catch(() => null);
-        if (!disposed) setWorkerStatus(response.ok && data?.ok && data.worker === "online" ? "online" : "offline");
+        if (!disposed) setWorkerStatus(response.ok && data?.ok && (data.worker === "online" || data.service === "downly-worker") ? "online" : "offline");
       } catch (error) {
         if (!disposed && error?.name !== "AbortError") setWorkerStatus("offline");
       }
@@ -379,7 +379,7 @@ export default function App() {
     setMessage("");
 
     if (workerStatus === "offline") {
-      setError("The Downly worker is offline. Start the Termux worker and retry.");
+      setError("The Downly media worker is temporarily unavailable. Please retry in a moment.");
       return;
     }
     const media = detectedMedia.find((item) => item.url === selectedMediaUrl)
