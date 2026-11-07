@@ -181,11 +181,13 @@ if(u.pathname==="/api/ytdlp/stream"&&(req.method==="GET"||req.method==="POST")){
       referer:String(values.referer||mediaUrl),
       format:String(values.format||"best"),
       audio_only:values.audio_only==="true"?"true":"false",
-      filename:String(values.filename||"")
+      filename:String(values.filename||""),
+      preview:values.preview==="true"?"true":"false"
     };
     const upstream=await workerFetch("/v1/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
       ...workerValues,
-      audio_only:workerValues.audio_only==="true"
+      audio_only:workerValues.audio_only==="true",
+      preview:workerValues.preview==="true"
     }),signal:controller.signal});
     if(!upstream.ok){
       const failure=await upstream.json().catch(()=>null);
