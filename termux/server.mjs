@@ -2,7 +2,7 @@ import http from "node:http";
 import { URL } from "node:url";
 import { promises as fs, createReadStream } from "node:fs";
 
-const HOST=process.env.HOST||"0.0.0.0";
+const HOST=process.env.HOST||"127.0.0.1";
 const PORT=Number(process.env.PORT||3000);
 const WORKER_URL=(process.env.YTDLP_WORKER_URL||"http://127.0.0.1:8080").replace(/\/$/,"");
 const WORKER_TOKEN=process.env.YTDLP_WORKER_TOKEN||"";\nconst WORKER_MODE=process.env.YTDLP_WORKER_MODE||"local";
