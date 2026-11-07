@@ -32,106 +32,67 @@ export default function App(){
  const api=async(path,options={},base=API_BASE)=>{const r=await fetch(base+path,options);return r};
  const inspect=async()=>{
    const v=url.trim(); setError(""); setInfo(null); setFormats([]); setMedia([]); setSelected(""); setProgress(0);
-   if(!/^https?:\/\//i.test(v)){setError("Enter a complete http(s) URL.");return}
-   setBusy(true);setStatus("Inspecting page…");
+   if(!isYT(v)){setError("Enter a valid YouTube URL.");return}
+   setBusy(true);setStatus("Inspecting YouTube…");
    try{
-     let r=await api("/api/media/info",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify({url:v})});
-     let d=await r.json().catch(()=>null);
-     if(r.ok&&d?.ok&&Array.isArray(d.formats)&&d.formats.length){
-       applyFormats(d);setBackend("Cloud worker");return;
-     }
-     if(r.status===429||r.status>=500){
-       try{const lr=await api("/api/media/info",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify({url:v})},LOCAL_API);const ld=await lr.json().catch(()=>null);if(lr.ok&&ld?.ok&&ld.formats?.length){applyFormats(ld);setBackend("Local Termux worker");return}}catch{}
-     }
-     r=await api("/api/media/crawl",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify({url:v})});
-     d=await r.json().catch(()=>null);
-     if(!r.ok||!d?.ok)throw new Error(d?.error||"The page could not be scanned.");
-     const items=(d.items||[]).filter(x=>x?.url).map(x=>({url:x.url,type:x.kind==="hls"||x.kind==="dash"?"stream":String(x.mime||"").startsWith("audio/")?"audio":"video",ext:x.extension,mime:x.mime}));
-     setInfo({title:d.title||host(v),author:host(v),thumbnail:d.thumbnail||null});
-     setMedia(items);setSelected(items.find(x=>x.type==="video"||x.type==="audio")?.url||items[0]?.url||"");
-     setBackend("Cloud worker");setStatus(`Found ${items.length} media source(s)`);
+     const r=await api("/api/media/info",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify({url:v})});
+     const d=await r.json().catch(()=>null);
+     if(!r.ok||!d?.ok||!Array.isArray(d.formats)||!d.formats.length)throw new Error(d?.error||"Could not load YouTube formats.");
+     applyFormats(d);setBackend("Pytubefix worker");
    }catch(e){setError(e?.message||"Inspection failed.");setStatus("Inspection failed")}finally{setBusy(false)}
- };
- const applyFormats=d=>{const first=(d.formats||[]).find(x=>x.hasVideo)||d.formats?.[0];setInfo(d);setFormats(d.formats||[]);setFormat(first?.hasVideo?"MP4":"MP3");setQuality(first?.id||"best");setStatus(`Ready · ${d.formats.length} formats`);};
+ }; const applyFormats=d=>{const first=(d.formats||[]).find(x=>x.hasVideo)||d.formats?.[0];setInfo({title:d.title,author:d.author,thumbnail:d.thumbnail,durationString:d.durationString,webpageUrl:d.webpageUrl||d.url});setFormats(d.formats||[]);setFormat(first?.hasVideo?"MP4":"MP3");setQuality(first?.id||"");setStatus(`Ready · ${d.formats.length} formats`);};
  const download=async()=>{
    const v=url.trim();setError("");
-   const chosen=media.find(x=>x.url===selected)||media.find(x=>x.type==="video"||x.type==="audio");
-   if(!formats.length&&!chosen){setError("Inspect the URL first.");return}
-   setBusy(true);setWritten(0);setTotal(0);setProgress(0);setStatus("Preparing download…");
+   if(!selectedFormat){setError("Inspect the URL and select a format first.");return}
+   setBusy(true);setWritten(0);setTotal(0);setProgress(0);setStatus("Creating download job…");
    try{
-     let streamUrl,filename;
-     if(formats.length){
-       const audio=format==="MP3";
-       const f=formats.find(x=>x.id===quality&&(audio?x.hasAudio:x.hasVideo))||formats.find(x=>audio?x.hasAudio:x.hasVideo)||formats[0];
-       const direct=!audio&&f?.hasAudio&&f?.directUrl?f.directUrl:"";
-       const selector=audio?"ba/b":(f?.selector||"bv*+ba/b");
-       const title=clean(info?.title||"downly-download");
-       filename=`${title}.${audio?"mp3":direct&&/^[a-z0-9]{2,5}$/i.test(f?.ext||"")?f.ext.toLowerCase():"mp4"}`;
-       const q=new URLSearchParams({url:v,direct_url:direct,referer:info?.webpageUrl||v,format:selector,audio_only:audio?"true":"false",filename});
-       streamUrl=API_BASE+"/api/ytdlp/stream?"+q.toString();
-       if(backend==="Local Termux worker")streamUrl=LOCAL_API+"/api/ytdlp/stream?"+q.toString();
-     }else{
-       const e=(chosen.ext||ext(chosen.url)||"mp4").toLowerCase();
-       filename=`${clean(info?.title||"downly-download")}.${e==="m3u8"||e==="mpd"?"mp4":e}`;
-       const q=new URLSearchParams({url:v,direct_url:chosen.url,referer:v,format:"b",audio_only:chosen.type==="audio"?"true":"false",filename});
-       streamUrl=API_BASE+"/api/ytdlp/stream?"+q.toString();
+     const audio=format==="MP3";
+     const body={url:v,itag:selectedFormat.itag||selectedFormat.id,mode:audio?"audio":"video",output_format:audio?"mp3":"mp4"};
+     const r=await api("/api/ytdlp/jobs",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify(body)});
+     const d=await r.json().catch(()=>null);
+     if(!r.ok||!d?.ok)throw new Error(d?.error||"Could not create download job.");
+     const jobId=d.id||d.job_id;if(!jobId)throw new Error("Worker did not return a job id.");
+     let job=null;
+     for(let i=0;i<240;i++){
+       await new Promise(resolve=>setTimeout(resolve,1000));
+       const jr=await api("/api/ytdlp/jobs/"+encodeURIComponent(jobId),{headers:{Accept:"application/json"}});
+       const jd=await jr.json().catch(()=>null);
+       if(!jr.ok||!jd)throw new Error(jd?.error||"Could not read download progress.");
+       job=jd.job||jd;const pct=Number(job.progress)||0;setProgress(pct);setWritten(Number(job.downloaded)||0);setTotal(Number(job.total)||0);
+       setStatus(job.status==="merging"?"Merging video + audio…":job.status==="converting"?"Converting…":"Downloading · "+Math.round(pct)+"%");
+       if(job.status==="ready"||job.status==="completed")break;
+       if(["failed","error","cancelled"].includes(job.status))throw new Error(job.error||"Worker download failed.");
      }
+     if(!job||!["ready","completed"].includes(job.status))throw new Error("Download timed out.");
+     const fileUrl=API_BASE+"/api/ytdlp/jobs/"+encodeURIComponent(jobId)+"/file";
+     const filename=job.filename||((clean(info?.title||"downly-download"))+"."+(audio?"mp3":"mp4"));
      const destinationUri=FileSystem.documentDirectory+clean(filename);
-     const runDownload=async target=>{
-       const t=FileSystem.createDownloadResumable(target,destinationUri,{headers:{Accept:"*/*"}},p=>{const tw=Number(p.totalBytesExpectedToWrite)||0;setWritten(p.totalBytesWritten);setTotal(tw);setProgress(tw>0?p.totalBytesWritten/tw*100:0);setStatus(tw>0?`Downloading · ${Math.round(p.totalBytesWritten/tw*100)}%`:`Downloading · ${bytes(p.totalBytesWritten)}`)}); 
-       task.current=t;
-       const result=await t.downloadAsync();
-       return result ? new File(result.uri) : null;
-     };
-     let file;
-     try{
-       file=await runDownload(streamUrl);
-     }catch(firstError){
-       if(backend==="Cloud worker"&&isYT(v)){
-         setStatus("Cloud blocked · trying local worker…");
-         try{
-           const localUrl=streamUrl.replace(API_BASE,LOCAL_API);
-           file=await runDownload(localUrl);
-           setBackend("Local Termux worker");
-         }catch(localError){throw localError}
-       }else throw firstError;
-     }
-     if(!file)throw new Error("Download cancelled.");
-     const item={id:String(Date.now()),url:safeUrl(v),title:info?.title||filename,filename,size:file.size||written,uri:file.uri,time:new Date().toISOString(),format};
-     await saveHistory(item);setProgress(100);setStatus(`Complete · ${bytes(item.size)}`);
-     Alert.alert("Downly",`${filename}\\n\\nDownload complete.`,[{text:"Share",onPress:()=>share(file.uri)},{text:"Open",onPress:()=>open(file)},{text:"OK"}]);
+     const t=FileSystem.createDownloadResumable(fileUrl,destinationUri,{headers:{Accept:"*/*"}},p=>{const tw=Number(p.totalBytesExpectedToWrite)||0;setWritten(p.totalBytesWritten);setTotal(tw);setProgress(tw?p.totalBytesWritten/tw*100:100);setStatus(tw?"Saving · "+Math.round(p.totalBytesWritten/tw*100)+"%":"Saving…")});
+     task.current=t;const result=await t.downloadAsync();const file=result?new File(result.uri):null;
+     if(!file)throw new Error("File save failed.");
+     const item={id:String(Date.now()),url:safeUrl(v),title:info?.title||filename,filename,size:file.size||job.total||0,uri:file.uri,time:new Date().toISOString(),format};
+     await saveHistory(item);setProgress(100);setStatus("Complete · "+bytes(item.size));
+     Alert.alert("Downly",filename+"\\n\\nDownload complete.",[{text:"Share",onPress:()=>share(file.uri)},{text:"Open",onPress:()=>open(file)},{text:"OK"}]);
    }catch(e){if(!/cancel/i.test(e?.message||""))setError(e?.message||"Download failed.");setStatus("Download stopped")}finally{task.current=null;setBusy(false)}
- };
- const cancel=async()=>{try{await task.current?.pauseAsync()}catch{}try{await task.current?.cancelAsync()}catch{}setStatus("Cancelled");setBusy(false)};
+ }; const cancel=async()=>{try{await task.current?.pauseAsync()}catch{}try{await task.current?.cancelAsync()}catch{}setStatus("Cancelled");setBusy(false)};
  const share=async uri=>{if(await Sharing.isAvailableAsync())await Sharing.shareAsync(uri,{dialogTitle:"Save or share with Downly"});else Alert.alert("Saved",uri)};
  const open=async f=>{try{if(await File.canPreview(f))await File.preview(f,{title:f.name});else await share(f.uri)}catch(e){Alert.alert("Open",e?.message||"No compatible viewer found.")}};
  const preview=async()=>{
    setError("");
-   const f=selectedFormat||options[0];
-   const chosen=media.find(x=>x.url===selected);
-   if(!f&&!chosen){setError("Inspect the URL and select a media format first.");return}
+   if(!selectedFormat){setError("Inspect the URL and select a video format first.");return}
+   if(!selectedFormat.hasVideo){setError("Audio-only formats cannot be previewed in the video player.");return}
    try{
-     let target="";
-     let title=info?.title||"Downly Preview";
-     if(f){
-       const audio=format==="MP3";
-       const q=new URLSearchParams({url:url.trim(),direct_url:f.directUrl||"",referer:info?.webpageUrl||url.trim(),format:f.selector||f.id||"best",audio_only:audio?"true":"false",filename:clean(title)+"."+(audio?"mp3":(f.ext||"mp4")),preview:"true"});
-       target=(backend==="Local Termux worker"?LOCAL_API:API_BASE)+"/api/ytdlp/stream?"+q.toString();
-     }else{
-       target=chosen.url;
-       title=info?.title||"Media Preview";
-     }
-     setPreviewTitle(title);setPreviewUrl(target);
+     const q=new URLSearchParams({url:url.trim(),itag:String(selectedFormat.itag||selectedFormat.id),preview:"true"});
+     setPreviewTitle(info?.title||"Downly Preview");setPreviewUrl(API_BASE+"/api/ytdlp/stream?"+q.toString());
    }catch(e){setError(e?.message||"Preview failed.")}
- };
- const closePreview=()=>setPreviewUrl("");
+ }; const closePreview=()=>setPreviewUrl("");
  const clear=()=>{setUrl("");setInfo(null);setFormats([]);setMedia([]);setSelected("");setError("");setStatus("Ready");setPreviewUrl("")};
  const clearHistory=async()=>{setHistory([]);if(!HISTORY)return;try{if(HISTORY.exists)HISTORY.delete()}catch{}};
 
  const options=useMemo(()=>formats.filter(x=>format==="MP3"?x.hasAudio:x.hasVideo),[formats,format]);
  const selectedFormat=useMemo(()=>options.find(x=>x.id===quality)||options[0]||null,[options,quality]);
- const selectedSize=selectedFormat?.filesize||selectedFormat?.filesize_approx||0;
- const qualityLabel=selectedFormat ? (selectedFormat.label || selectedFormat.id) : "Select quality";
+ const selectedSize=selectedFormat?.filesize||selectedFormat?.size?.bytes||0;
+ const qualityLabel=selectedFormat ? ((selectedFormat.extension?.toUpperCase()||format)+" · "+(selectedFormat.resolution||selectedFormat.abr||selectedFormat.id)+(selectedFormat.fps?" · "+selectedFormat.fps+"fps":"")) : "Select quality";
 
  return <SafeAreaView style={s.safe}><StatusBar barStyle="light-content" backgroundColor={C.bg}/><ScrollView contentContainerStyle={s.page} keyboardShouldPersistTaps="handled">
   <View style={s.header}><View style={s.logo}><Text style={s.logoText}>D</Text></View><View style={{flex:1}}><Text style={s.brand}>Downly</Text><Text style={s.tag}>MEDIA DOWNLOADER</Text></View><View style={s.headerStatus}><View style={s.dot}/><Text style={s.headerStatusText}>READY</Text></View></View>
@@ -144,7 +105,7 @@ export default function App(){
    {!!error&&<Text style={s.error}>{error}</Text>}
   </View>
 
-  {formats.length>0&&<View style={s.card}><View style={s.sectionHead}><View><Text style={s.h2}>Download settings</Text><Text style={s.sectionSub}>Choose format and quality before saving</Text></View><View style={s.formatBadge}><Text style={s.formatBadgeText}>{format}</Text></View></View><Text style={s.label}>FORMAT</Text><View style={s.segment}>{["MP4","MP3"].map(x=><Pressable key={x} style={[s.segmentBtn,format===x&&s.segmentOn]} onPress={()=>{setFormat(x);const f=formats.find(y=>x==="MP3"?y.hasAudio:y.hasVideo);if(f)setQuality(f.id)}}><Text style={[s.segmentText,format===x&&s.segmentTextOn]}>{x}</Text></Pressable>)}</View><Text style={s.label}>QUALITY</Text><Pressable style={s.dropdown} onPress={()=>setQualityOpen(true)} disabled={!options.length}><View style={{flex:1}}><Text style={s.dropdownValue}>{qualityLabel}</Text><Text style={s.dropdownMeta}>{selectedSize?bytes(selectedSize)+" estimated":"Size calculated during download"}</Text></View><Text style={s.chevron}>⌄</Text></Pressable><View style={s.downloadSummary}><Text style={s.summaryText}>{selectedFormat?.ext?.toUpperCase()||format} · {selectedSize?bytes(selectedSize):"variable size"}</Text><Text style={s.summaryHint}>Saved to Downly app storage</Text></View><View style={s.actionRow}><Pressable style={s.previewBtn} onPress={preview} disabled={busy||!selectedFormat}><Text style={s.previewText}>▶ Preview</Text></Pressable><Pressable style={[s.download,s.actionDownload,busy&&s.downloadDisabled]} onPress={download} disabled={busy||!selectedFormat}>{busy?<ActivityIndicator color="#fff"/>:<Text style={s.downloadText}>↓ Download {format}</Text>}</Pressable></View><Text style={s.downloadHint}>Preview streams the selected format without saving it.</Text></View>}
+  {formats.length>0&&<View style={s.card}><View style={s.sectionHead}><View><Text style={s.h2}>Download settings</Text><Text style={s.sectionSub}>Choose format and quality before saving</Text></View><View style={s.formatBadge}><Text style={s.formatBadgeText}>{format}</Text></View></View><Text style={s.label}>FORMAT</Text><View style={s.segment}>{["MP4","MP3"].map(x=><Pressable key={x} style={[s.segmentBtn,format===x&&s.segmentOn]} onPress={()=>{setFormat(x);const f=formats.find(y=>x==="MP3"?y.hasAudio:y.hasVideo);if(f)setQuality(f.id)}}><Text style={[s.segmentText,format===x&&s.segmentTextOn]}>{x}</Text></Pressable>)}</View><Text style={s.label}>QUALITY</Text><Pressable style={s.dropdown} onPress={()=>setQualityOpen(true)} disabled={!options.length}><View style={{flex:1}}><Text style={s.dropdownValue}>{qualityLabel}</Text><Text style={s.dropdownMeta}>{selectedSize?bytes(selectedSize)+" estimated":"Size calculated during download"}</Text></View><Text style={s.chevron}>⌄</Text></Pressable><View style={s.downloadSummary}><Text style={s.summaryText}>{selectedFormat?.extension?.toUpperCase()||format} · {selectedSize?bytes(selectedSize):"variable size"}</Text><Text style={s.summaryHint}>Saved to Downly app storage</Text></View><View style={s.actionRow}><Pressable style={s.previewBtn} onPress={preview} disabled={busy||!selectedFormat}><Text style={s.previewText}>▶ Preview</Text></Pressable><Pressable style={[s.download,s.actionDownload,busy&&s.downloadDisabled]} onPress={download} disabled={busy||!selectedFormat}>{busy?<ActivityIndicator color="#fff"/>:<Text style={s.downloadText}>↓ Download {format}</Text>}</Pressable></View><Text style={s.downloadHint}>Preview streams the selected format without saving it.</Text></View>}
 
   {media.length>0&&<View style={s.card}><Text style={s.h2}>Detected media</Text>{media.slice(0,30).map((x,i)=><Pressable key={x.url+i} style={[s.media,s.selected===x.url&&s.selected]} onPress={()=>setSelected(x.url)}><View style={{flex:1}}><Text style={s.mediaName}>{(x.type||"media").toUpperCase()} · {x.ext||"stream"}</Text><Text style={s.meta} numberOfLines={1}>{host(x.url)}</Text></View><Text style={s.action}>{selected===x.url?"Selected":"Select"}</Text></Pressable>)}<Pressable style={s.download} onPress={download} disabled={busy||!selected}>{busy?<ActivityIndicator color="#fff"/>:<Text style={s.downloadText}>↓ Download selected</Text>}</Pressable></View>}
 
@@ -152,7 +113,7 @@ export default function App(){
 
   <View style={s.card}><View style={s.historyHead}><Text style={s.h2}>Download history</Text>{history.length>0&&<Pressable onPress={clearHistory}><Text style={s.clear}>Clear</Text></Pressable>}</View>{!history.length?<Text style={s.empty}>No downloads yet.</Text>:history.map(x=><View style={s.item} key={x.id}><View style={{flex:1}}><Text style={s.itemName} numberOfLines={1}>{x.title}</Text><Text style={s.meta}>{x.filename} · {bytes(x.size)}</Text></View><Pressable onPress={()=>open(new File(x.uri))}><Text style={s.action}>Open</Text></Pressable></View>)}</View>
 
-  <Modal visible={!!previewUrl} transparent animationType="fade" onRequestClose={closePreview}><View style={s.previewShade}><View style={s.previewBox}><View style={s.previewHead}><View style={{flex:1}}><Text style={s.previewTitle} numberOfLines={1}>{previewTitle}</Text><Text style={s.previewSub}>Streaming preview · no download</Text></View><Pressable onPress={closePreview} style={s.close}><Text style={s.closeText}>×</Text></Pressable></View>{previewUrl?<VideoView player={player} style={s.video} nativeControls contentFit="contain" fullscreenOptions={{}}/>:null}</View></View></Modal><Modal visible={qualityOpen} transparent animationType="slide" onRequestClose={()=>setQualityOpen(false)}><View style={s.modalShade}><View style={s.sheet}><View style={s.sheetHandle}/><View style={s.sheetHead}><View><Text style={s.sheetTitle}>Choose {format} quality</Text><Text style={s.sectionSub}>{options.length} available options</Text></View><Pressable onPress={()=>setQualityOpen(false)} style={s.close}><Text style={s.closeText}>×</Text></Pressable></View><ScrollView style={{maxHeight:420}}>{options.map(x=><Pressable key={x.id} style={[s.option,quality===x.id&&s.optionSelected]} onPress={()=>{setQuality(x.id);setQualityOpen(false)}}><View style={{flex:1}}><Text style={s.optionTitle}>{x.label||x.id}</Text><Text style={s.optionMeta}>{x.ext?.toUpperCase()||"MEDIA"} · {x.height?x.height+"p":"audio"}{x.fps?" · "+x.fps+"fps":""}</Text></View><Text style={s.optionSize}>{x.filesize?bytes(x.filesize):"Size unknown"}</Text><Text style={s.optionCheck}>{quality===x.id?"✓":""}</Text></Pressable>)}</ScrollView></View></View></Modal><View style={s.note}><Text style={s.noteTitle}>Downly on Android</Text><Text style={s.noteText}>Page inspection, format selection, MP4/MP3, media crawling, progress, cancel, history and sharing are now native. The app uses the same Downly worker APIs as the web app. YouTube availability still depends on the worker's upstream access; if cloud YouTube is blocked, the app automatically attempts the local Termux worker.</Text></View>
+  <Modal visible={!!previewUrl} transparent animationType="fade" onRequestClose={closePreview}><View style={s.previewShade}><View style={s.previewBox}><View style={s.previewHead}><View style={{flex:1}}><Text style={s.previewTitle} numberOfLines={1}>{previewTitle}</Text><Text style={s.previewSub}>Streaming preview · no download</Text></View><Pressable onPress={closePreview} style={s.close}><Text style={s.closeText}>×</Text></Pressable></View>{previewUrl?<VideoView player={player} style={s.video} nativeControls contentFit="contain" fullscreenOptions={{}}/>:null}</View></View></Modal><Modal visible={qualityOpen} transparent animationType="slide" onRequestClose={()=>setQualityOpen(false)}><View style={s.modalShade}><View style={s.sheet}><View style={s.sheetHandle}/><View style={s.sheetHead}><View><Text style={s.sheetTitle}>Choose {format} quality</Text><Text style={s.sectionSub}>{options.length} available options</Text></View><Pressable onPress={()=>setQualityOpen(false)} style={s.close}><Text style={s.closeText}>×</Text></Pressable></View><ScrollView style={{maxHeight:420}}>{options.map(x=><Pressable key={x.id} style={[s.option,quality===x.id&&s.optionSelected]} onPress={()=>{setQuality(x.id);setQualityOpen(false)}}><View style={{flex:1}}><Text style={s.optionTitle}>{x.label||x.id}</Text><Text style={s.optionMeta}>{x.extension?.toUpperCase()||"MEDIA"} · {x.height?x.height+"p":"audio"}{x.fps?" · "+x.fps+"fps":""}</Text></View><Text style={s.optionSize}>{(x.filesize||x.size?.bytes)?bytes(x.filesize||x.size.bytes):(x.size?.display||"Size unknown")}</Text><Text style={s.optionCheck}>{quality===x.id?"✓":""}</Text></Pressable>)}</ScrollView></View></View></Modal><View style={s.note}><Text style={s.noteTitle}>Downly on Android</Text><Text style={s.noteText}>YouTube inspection, format selection, MP4/MP3 downloads, progress, preview, history and sharing use the pytubefix Downly worker.</Text></View>
  </ScrollView></SafeAreaView>
 }
 
