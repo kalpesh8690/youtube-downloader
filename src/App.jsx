@@ -89,6 +89,7 @@ export default function App() {
   const [scanMeta, setScanMeta] = useState({ pagesScanned: 0, count: 0, directCount: 0, streamCount: 0, partial: false });
   const [transferState, setTransferState] = useState("idle");
   const [workerStatus, setWorkerStatus] = useState("checking");
+  const [mediaBackend, setMediaBackend] = useState("cloud");
   const [copied, setCopied] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadBytes, setDownloadBytes] = useState(0);
@@ -161,6 +162,31 @@ export default function App() {
     try { localStorage.setItem("downly-history", JSON.stringify(next)); } catch {}
   };
 
+  const LOCAL_API = "http://127.0.0.1:3000";
+  const requestApi = async (path, options = {}, backend = mediaBackend) => {
+    const base = backend === "local" ? LOCAL_API : "";
+    const request = { ...options };
+    if (backend === "local" && window.isSecureContext) request.targetAddressSpace = "loopback";
+    return fetch(base + path, request);
+  };
+
+  const tryLocalYouTube = async (value, controller) => {
+    try {
+      const response = await requestApi("/api/media/info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ url: value }),
+        signal: controller.signal,
+      }, "local");
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.ok || !Array.isArray(data.formats) || !data.formats.length) return null;
+      setMediaBackend("local");
+      return data;
+    } catch {
+      return null;
+    }
+  };
+
   const inspectMediaUrl = async (input, automatic = false) => {
     const value = String(input || "").trim();
     if (!value) return null;
@@ -176,15 +202,32 @@ export default function App() {
     if (!automatic) setMessage("");
 
     try {
-      const response = await fetch("/api/media/info", {
+      const response = await requestApi("/api/media/info", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ url: value }),
         signal: controller.signal
-      });
+      }, "cloud");
       const data = await response.json().catch(() => null);
 
       if (!response.ok && isYouTube(value)) {
+        if (!automatic && (response.status === 429 || response.status >= 500)) {
+          const localData = await tryLocalYouTube(value, controller);
+          if (localData) {
+            const firstVideo = localData.formats.find((x) => x.hasVideo) || localData.formats[0];
+            setInfo(localData);
+            setAvailableFormats(localData.formats);
+            setFormat(firstVideo?.hasVideo ? "MP4" : "MP3");
+            setQuality(firstVideo?.id || "best");
+            setDetectedMedia([]);
+            setSelectedMediaUrl("");
+            setScanMeta({ pagesScanned: 1, count: localData.formats.length, directCount: localData.formats.length, streamCount: 0, partial: false });
+            setProgressLabel("Device worker ready");
+            setInspectState("ready");
+            setMessage((localData.title ? "Ready: " + localData.title : "Media details loaded.") + " · Local Termux worker");
+            return localData;
+          }
+        }
         throw Object.assign(new Error(data?.error || "YouTube could not be inspected by the cloud worker."), { status: response.status });
       }
 
@@ -210,7 +253,7 @@ export default function App() {
         setInspectState("ready");
       }
 
-      const crawlResponse = await fetch("/api/media/crawl", {
+      const crawlResponse = await requestApi("/api/media/crawl", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ url: value }),
@@ -305,7 +348,7 @@ export default function App() {
     downloadAbortRef.current?.abort();
     const controller = new AbortController();
     downloadAbortRef.current = controller;
-    const response = await fetch("/api/ytdlp/stream?" + new URLSearchParams(values), { cache: "no-store", signal: controller.signal });
+    const response = await requestApi("/api/ytdlp/stream?" + new URLSearchParams(values), { cache: "no-store", signal: controller.signal }, mediaBackend);
     if (!response.ok) {
       const data = await response.json().catch(() => null);
       throw new Error(data?.error || "Download stream could not be started.");
