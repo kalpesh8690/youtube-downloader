@@ -2,16 +2,18 @@
   "expo": {
     "name": "Downly",
     "slug": "downly",
-    "version": "1.0.0",
+    "version": "1.1.1",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "scheme": "downly",
     "icon": "./assets/icon.png",
     "android": {
       "package": "com.kalpesh.downly",
-      "versionCode": 2,
+      "versionCode": 3,
       "icon": "./assets/icon.png"
     },
-    "plugins": ["expo-file-system"]
+    "plugins": [
+      "expo-file-system"
+    ]
   }
 }
