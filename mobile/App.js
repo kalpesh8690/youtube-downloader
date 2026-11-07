@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Platform, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from "react-native";
 import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import * as Clipboard from "expo-clipboard";
 
 const API_BASE = "https://youtube-downloader.chauhankalpesh760.workers.dev";
 const LOCAL_API = "http://127.0.0.1:3000";
-const HISTORY = new File(Paths.document, "downly-history.json");
+const HISTORY = Platform.OS === "web" ? null : new File(Paths.document, "downly-history.json");
 const C={bg:"#05070d",card:"#0c111b",border:"#202a3a",text:"#f8fafc",muted:"#94a3b8",purple:"#7c3aed",blue:"#6366f1",green:"#34d399",red:"#fb7185"};
 
 const clean=s=>String(s||"downly-download").replace(/[\\/:*?"<>|]+/g," ").replace(/\s+/g," ").trim().slice(0,120)||"downly-download";
@@ -22,8 +22,8 @@ export default function App(){
  const task=useRef(null);
 
  useEffect(()=>{loadHistory()},[]);
- const loadHistory=async()=>{try{if(HISTORY.exists){const x=JSON.parse(await HISTORY.text());if(Array.isArray(x))setHistory(x)}}catch{}};
- const saveHistory=async item=>{const next=[item,...history.filter(x=>x.url!==item.url)].slice(0,20);setHistory(next);try{if(!HISTORY.exists)HISTORY.create();await HISTORY.write(JSON.stringify(next))}catch{}};
+ const loadHistory=async()=>{if(!HISTORY)return;try{if(HISTORY.exists){const x=JSON.parse(await HISTORY.text());if(Array.isArray(x))setHistory(x)}}catch{}};
+ const saveHistory=async item=>{const next=[item,...history.filter(x=>x.url!==item.url)].slice(0,20);setHistory(next);if(!HISTORY)return;try{if(!HISTORY.exists)HISTORY.create();await HISTORY.write(JSON.stringify(next))}catch{}};
 
  const api=async(path,options={},base=API_BASE)=>{const r=await fetch(base+path,options);return r};
  const inspect=async()=>{
@@ -85,7 +85,7 @@ export default function App(){
  const share=async uri=>{if(await Sharing.isAvailableAsync())await Sharing.shareAsync(uri,{dialogTitle:"Save or share with Downly"});else Alert.alert("Saved",uri)};
  const open=async f=>{try{if(await File.canPreview(f))await File.preview(f,{title:f.name});else await share(f.uri)}catch(e){Alert.alert("Open",e?.message||"No compatible viewer found.")}};
  const clear=()=>{setUrl("");setInfo(null);setFormats([]);setMedia([]);setSelected("");setError("");setStatus("Ready")};
- const clearHistory=async()=>{setHistory([]);try{if(HISTORY.exists)HISTORY.delete()}catch{}};
+ const clearHistory=async()=>{setHistory([]);if(!HISTORY)return;try{if(HISTORY.exists)HISTORY.delete()}catch{}};
 
  const options=useMemo(()=>formats.filter(x=>format==="MP3"?x.hasAudio:x.hasVideo).slice(0,80),[formats,format]);
 
