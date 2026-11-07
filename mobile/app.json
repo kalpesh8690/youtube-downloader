@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Downly",
+    "slug": "downly",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "package": "com.kalpesh.downly",
+      "versionCode": 1,
+      "usesCleartextTraffic": true
+    },
+    "plugins": ["expo-file-system"]
+  }
+}
