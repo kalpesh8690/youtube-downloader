@@ -7,9 +7,18 @@
     "userInterfaceStyle": "dark",
     "android": {
       "package": "com.kalpesh.downly",
-      "versionCode": 1,
-      "usesCleartextTraffic": true
+      "versionCode": 1
     },
-    "plugins": ["expo-file-system"]
+    "plugins": [
+      "expo-file-system",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ]
   }
 }
