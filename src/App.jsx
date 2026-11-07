@@ -116,9 +116,21 @@ export default function App() {
       try {
         const response = await fetch("/api/health", { cache: "no-store", signal: controller.signal });
         const data = await response.json().catch(() => null);
-        if (!disposed) setWorkerStatus(response.ok && data?.ok && (data.worker === "online" || data.service === "downly-worker") ? "online" : "offline");
+        if (!response.ok || !data?.ok) throw new Error("cloud worker unavailable");
+        if (!disposed) setWorkerStatus("online");
       } catch (error) {
-        if (!disposed && error?.name !== "AbortError") setWorkerStatus("offline");
+        if (error?.name === "AbortError") return;
+        try {
+          const local = await fetch(LOCAL_API + "/api/health", {
+            cache: "no-store",
+            signal: controller.signal,
+            ...(window.isSecureContext ? { targetAddressSpace: "loopback" } : {})
+          });
+          const localData = await local.json().catch(() => null);
+          if (!disposed) setWorkerStatus(local.ok && localData?.ok ? "online" : "offline");
+        } catch (localError) {
+          if (!disposed && localError?.name !== "AbortError") setWorkerStatus("offline");
+        }
       }
     };
     checkWorker();
@@ -211,7 +223,7 @@ export default function App() {
       const data = await response.json().catch(() => null);
 
       if (!response.ok && isYouTube(value)) {
-        if (!automatic && (response.status === 429 || response.status >= 500)) {
+        if (response.status === 429 || response.status >= 500) {
           const localData = await tryLocalYouTube(value, controller);
           if (localData) {
             const firstVideo = localData.formats.find((x) => x.hasVideo) || localData.formats[0];
@@ -425,8 +437,8 @@ export default function App() {
     setError("");
     setMessage("");
 
-    if (workerStatus === "offline") {
-      setError("The Downly media worker is temporarily unavailable. Please retry in a moment.");
+    if (workerStatus === "offline" && mediaBackend !== "local") {
+      setError("No media worker is reachable. Start the local Termux worker or retry the cloud worker.");
       return;
     }
     const media = detectedMedia.find((item) => item.url === selectedMediaUrl)
