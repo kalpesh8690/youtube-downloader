@@ -4,6 +4,9 @@ function backendPath(pathname) {
   if (pathname === "/api/health") return "/health";
   if (pathname === "/api/media/info") return "/v1/info";
   if (pathname === "/api/media/crawl") return "/v1/crawl";
+  if (pathname === "/api/media/stream") return "/v1/stream";
+  if (pathname === "/api/media/jobs") return "/v1/jobs";
+  if (pathname.startsWith("/api/media/jobs/")) return "/v1/jobs/" + pathname.slice("/api/media/jobs/".length);
   if (pathname === "/api/ytdlp/stream") return "/v1/stream";
   if (pathname === "/api/ytdlp/jobs") return "/v1/jobs";
   if (pathname.startsWith("/api/ytdlp/jobs/")) return "/v1/jobs/" + pathname.slice("/api/ytdlp/jobs/".length);
