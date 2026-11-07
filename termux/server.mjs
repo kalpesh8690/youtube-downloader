@@ -4,8 +4,8 @@ import { promises as fs, createReadStream } from "node:fs";
 
 const HOST=process.env.HOST||"0.0.0.0";
 const PORT=Number(process.env.PORT||3000);
-const WORKER_URL=(process.env.YTDLP_WORKER_URL||"https://downly-worker.onrender.com").replace(/\/$/,"");
-const WORKER_TOKEN=process.env.YTDLP_WORKER_TOKEN||"";
+const WORKER_URL=(process.env.YTDLP_WORKER_URL||"http://127.0.0.1:8080").replace(/\/$/,"");
+const WORKER_TOKEN=process.env.YTDLP_WORKER_TOKEN||"";\nconst WORKER_MODE=process.env.YTDLP_WORKER_MODE||"local";
 const DIST=new URL("../dist/",import.meta.url);
 const mime={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".json":"application/json; charset=utf-8",".svg":"image/svg+xml",".png":"image/png",".jpg":"image/jpeg",".jpeg":"image/jpeg",".webp":"image/webp",".ico":"image/x-icon",".txt":"text/plain; charset=utf-8",".webmanifest":"application/manifest+json; charset=utf-8"};
 const securityHeaders = {
@@ -276,4 +276,4 @@ if(u.pathname==="/api/youtube/info"&&(req.method==="GET"||req.method==="POST")){
   catch(e){return json(res,422,{ok:false,error:e?.message||"Unable to inspect YouTube URL",code:"MEDIA_INSPECT_ERROR"});}
 }
 return staticFile(req,res);}catch(e){console.error("[api-error]",req.method,new URL(req.url,"http://localhost").pathname,e?.stack||e);json(res,502,{ok:false,error:e?.message||"Termux server error",code:"TERMUX_API_ERROR"});}});
-server.listen(PORT,HOST,()=>console.log("[startup] Downly Termux frontend http://127.0.0.1:"+PORT+" | worker="+WORKER_URL+" | token="+(WORKER_TOKEN?"configured":"MISSING")+" | inPageStreaming=true | streamBackpressure=true"));
+server.listen(PORT,HOST,()=>console.log("[startup] Downly Termux frontend http://127.0.0.1:"+PORT+" | worker="+WORKER_URL+" | mode="+WORKER_MODE+" | token="+(WORKER_TOKEN?"configured":"MISSING")+" | inPageStreaming=true | streamBackpressure=true"));
