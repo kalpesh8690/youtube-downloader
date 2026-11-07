@@ -6,11 +6,11 @@ import * as Sharing from "expo-sharing";
 const HISTORY = new File(Paths.document, "downly-history.json");
 const C = { bg:"#05070d", card:"#0c111b", border:"#202a3a", text:"#f8fafc", muted:"#94a3b8", purple:"#7c3aed", blue:"#6366f1", green:"#34d399", red:"#fb7185" };
 
-const clean = s => String(s || "downly-download").replace(/[\\/:*?"<>|]+/g," ").replace(/\\s+/g," ").trim().slice(0,100) || "downly-download";
+const clean = s => String(s || "downly-download").replace(/[\\/:*?"<>|]+/g," ").replace(/\s+/g," ").trim().slice(0,100) || "downly-download";
 const size = n => { if(!n) return "0 B"; const u=["B","KB","MB","GB"],i=Math.min(3,Math.floor(Math.log(n)/Math.log(1024))); return `${(n/1024**i).toFixed(i?1:0)} ${u[i]}`; };
 const fileName = s => { try { const p=decodeURIComponent(new URL(s).pathname.split("/").pop()||""); return clean(p||"download"); } catch { return "download"; } };
-const extension = s => { const m=String(s).match(/\\.([a-z0-9]{1,8})$/i); return m?m[1].toLowerCase():""; };
-const pageHost = s => { try { return /youtube\\.com|youtu\\.be|instagram\\.com|facebook\\.com|tiktok\\.com|twitter\\.com|x\\.com/.test(new URL(s).hostname.toLowerCase()); } catch { return false; } };
+const extension = s => { const m=String(s).match(/\.([a-z0-9]{1,8})$/i); return m?m[1].toLowerCase():""; };
+const pageHost = s => { try { return /youtube\.com|youtu\.be|instagram\.com|facebook\.com|tiktok\.com|twitter\.com|x\.com/.test(new URL(s).hostname.toLowerCase()); } catch { return false; } };
 
 export default function App() {
   const [url,setUrl]=useState("");
@@ -30,14 +30,14 @@ export default function App() {
 
   const check = () => {
     setError(""); const v=url.trim();
-    if(!/^https?:\\/\\//i.test(v)) return setError("Enter a complete http(s) direct file URL.");
+    if(!/^https?:\/\//i.test(v)) return setError("Enter a complete http(s) direct file URL.");
     if(pageHost(v)) return setError("This is a webpage URL. No-backend mode only downloads direct media/file URLs.");
     const n=fileName(v); if(!name) setName(n); setStatus(`Ready · direct ${extension(n)||"file"}`);
   };
 
   const download = async()=>{
     const v=url.trim();
-    if(!/^https?:\\/\\//i.test(v)) return setError("Enter a complete http(s) direct file URL.");
+    if(!/^https?:\/\//i.test(v)) return setError("Enter a complete http(s) direct file URL.");
     if(pageHost(v)) return setError("No-backend mode cannot resolve YouTube/social page URLs. Use a direct media URL.");
     let n=clean(name.trim()||fileName(v)); const e=extension(fileName(v)); if(!extension(n)&&e) n+=`.${e}`;
     setBusy(true); setError(""); setWritten(0); setTotal(0); setStatus(`Downloading ${n}…`);
