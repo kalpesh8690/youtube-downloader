@@ -6,8 +6,8 @@ import * as Sharing from "expo-sharing";
 import * as Clipboard from "expo-clipboard";
 import { useVideoPlayer, VideoView } from "expo-video";
 
-const API_BASE = "https://youtube-downloader.chauhankalpesh760.workers.dev";
-const LOCAL_API = "http://127.0.0.1:3000";
+const API_BASE = process.env.EXPO_PUBLIC_API_BASE || "https://youtube-downloader.chauhankalpesh760.workers.dev";
+const LOCAL_API = process.env.EXPO_PUBLIC_LOCAL_API || "http://127.0.0.1:3000";
 const HISTORY = Platform.OS === "web" ? null : new File(Paths.document, "downly-history.json");
 const C={bg:"#05070d",card:"#0c111b",border:"#202a3a",text:"#f8fafc",muted:"#94a3b8",purple:"#7c3aed",blue:"#6366f1",green:"#34d399",red:"#fb7185"};
 
@@ -20,6 +20,7 @@ const safeUrl=s=>{try{const u=new URL(s);return u.origin+u.pathname}catch{return
 
 export default function App(){
  const [url,setUrl]=useState(""),[format,setFormat]=useState("MP4"),[quality,setQuality]=useState("best"),[info,setInfo]=useState(null),[formats,setFormats]=useState([]),[media,setMedia]=useState([]),[selected,setSelected]=useState(""),[history,setHistory]=useState([]);
+ const [previewUrl,setPreviewUrl]=useState(""),[previewTitle,setPreviewTitle]=useState("Downly Preview");
  const [busy,setBusy]=useState(false),[status,setStatus]=useState("Ready"),[error,setError]=useState(""),[progress,setProgress]=useState(0),[written,setWritten]=useState(0),[total,setTotal]=useState(0),[backend,setBackend]=useState("Cloud worker"),[qualityOpen,setQualityOpen]=useState(false);
  const task=useRef(null);
  const player=useVideoPlayer(previewUrl||null, p=>{p.loop=false;});
