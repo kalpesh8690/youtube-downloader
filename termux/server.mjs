@@ -2,10 +2,10 @@ import http from "node:http";
 import { URL } from "node:url";
 import { promises as fs, createReadStream } from "node:fs";
 
-const HOST=process.env.HOST||"127.0.0.1";
+const HOST=process.env.HOST||"0.0.0.0";
 const PORT=Number(process.env.PORT||3000);
-const WORKER_URL=(process.env.YTDLP_WORKER_URL||"http://127.0.0.1:8080").replace(/\/$/,"");
-const WORKER_TOKEN=process.env.YTDLP_WORKER_TOKEN||"";
+const WORKER_URL=(process.env.YTDLP_WORKER_URL||"https://downly-worker.onrender.com").replace(/\/$/,"");
+const WORKER_TOKEN=process.env.YTDLP_WORKER_TOKEN||"test-downly-123";
 const DIST=new URL("../dist/",import.meta.url);
 const mime={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".json":"application/json; charset=utf-8",".svg":"image/svg+xml",".png":"image/png",".jpg":"image/jpeg",".jpeg":"image/jpeg",".webp":"image/webp",".ico":"image/x-icon",".txt":"text/plain; charset=utf-8",".webmanifest":"application/manifest+json; charset=utf-8"};
 const securityHeaders = {
