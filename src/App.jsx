@@ -56,7 +56,7 @@ function friendlyError(error, status) {
   if (status === 400) return error || "Please enter a valid public media URL.";
   if (status === 404) return error || "Video information is unavailable.";
   if (status === 405) return "This request method is not supported.";
-  if (status === 429) return "Too many requests. Please wait a moment and try again.";
+  if (status === 429) return error || "YouTube is temporarily blocking the cloud worker. Please retry later or switch to the local worker.";
   if (status >= 500) return error || "The server could not inspect or reach this media source. Please try again.";
   return error || "Something went wrong. Please try again.";
 }
@@ -184,6 +184,10 @@ export default function App() {
       });
       const data = await response.json().catch(() => null);
 
+      if (!response.ok && isYouTube(value)) {
+        throw Object.assign(new Error(data?.error || "YouTube could not be inspected by the cloud worker."), { status: response.status });
+      }
+
       if (response.ok && data?.ok && Array.isArray(data.formats) && data.formats.length) {
         setInfo(data);
         setAvailableFormats(data.formats);
@@ -250,7 +254,7 @@ export default function App() {
       setInspectState("error");
 
       setProgressLabel("Inspection failed");
-      setError(friendlyError(e?.message, 422));
+      setError(friendlyError(e?.message, e?.status || 422));
       return null;
     }
   };
