@@ -86,6 +86,9 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [detectedMedia, setDetectedMedia] = useState([]);
   const [selectedMediaUrl, setSelectedMediaUrl] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [previewKind, setPreviewKind] = useState("video");
   const [scanMeta, setScanMeta] = useState({ pagesScanned: 0, count: 0, directCount: 0, streamCount: 0, partial: false });
   const [transferState, setTransferState] = useState("idle");
   const [workerStatus, setWorkerStatus] = useState("checking");
@@ -403,6 +406,33 @@ export default function App() {
     downloadAbortRef.current = null;
   };
 
+  const openPreview = () => {
+    setError("");
+    const selected = availableFormats.find((x) => x.id === quality);
+    const media = detectedMedia.find((item) => item.url === selectedMediaUrl);
+    const source = selected?.directUrl || media?.url || "";
+    if (!source && !url.trim()) {
+      setError("Inspect the URL first, then choose a format to preview.");
+      return;
+    }
+    const audioOnly = format === "MP3" || (!selected?.hasVideo && Boolean(selected?.hasAudio));
+    const selector = selected?.selector || (audioOnly ? "ba/b" : "bv*+ba/b");
+    const title = String(info?.title || "downly-preview").replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 120) || "downly-preview";
+    const ext = audioOnly ? "mp3" : (selected?.ext || "mp4");
+    const previewPath = "/api/ytdlp/stream?" + new URLSearchParams({
+      url: url.trim(),
+      direct_url: selected?.directUrl || media?.url || "",
+      referer: info?.webpageUrl || url.trim(),
+      format: selector,
+      audio_only: audioOnly ? "true" : "false",
+      filename: title + "." + ext,
+      preview: "true"
+    }).toString();
+    setPreviewKind(audioOnly ? "audio" : "video");
+    setPreviewUrl(previewPath);
+    setPreviewOpen(true);
+  };
+
   const pasteFromClipboard = async () => {
     try {
       const value = await navigator.clipboard.readText();
@@ -638,6 +668,11 @@ export default function App() {
               <div className="aspect-video overflow-hidden rounded-2xl bg-gradient-to-br from-slate-800 to-slate-950 p-1">
                 {info?.thumbnail ? <img src={info.thumbnail} alt="" className="h-full w-full rounded-xl object-cover" /> : <div className="flex h-full items-center justify-center rounded-xl border border-white/5"><Play className="fill-white text-white" size={28} /></div>}
               </div>
+              {(availableFormats.length > 0 || detectedMedia.length > 0) && (
+                <button type="button" onClick={openPreview} disabled={!quality && !selectedMediaUrl} className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 px-4 text-sm font-bold text-white transition hover:bg-indigo-400 disabled:opacity-40">
+                  <Play size={17} className="fill-current" /> Preview selected media
+                </button>
+              )}
               <div className="mt-4 line-clamp-2 text-sm font-semibold text-white">{info?.title || "Paste a URL to inspect media"}</div>
               {scanMeta.count > 0 && (
                 <div className="mt-4 grid grid-cols-3 gap-2">
@@ -673,14 +708,18 @@ export default function App() {
                 </div>
               )}
               <div className="mt-7 grid gap-4 sm:grid-cols-2">
-                <label className="block text-xs font-semibold text-slate-400">FORMAT
-                  <select value={format} onChange={(e) => {
-                    const next=e.target.value;
-                    setFormat(next);
-                    const first=availableFormats.find((x) => next==="MP3" ? x.hasAudio : x.hasVideo);
-                    if(first) setQuality(first.id);
+                <label className="block text-xs font-semibold text-slate-400">FORMAT + SIZE
+                  <select value={quality} onChange={(e) => {
+                    const id=e.target.value;
+                    const selected=availableFormats.find((x) => x.id === id);
+                    setQuality(id);
+                    setFormat(selected?.hasVideo ? "MP4" : "MP3");
                   }} disabled={!availableFormats.length} className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-white outline-none focus:border-indigo-400/50 disabled:opacity-40">
-                    {outputModes.map((x) => <option key={x}>{x}</option>)}
+                    {availableFormats.length
+                      ? availableFormats.filter((x) => x.hasVideo || x.hasAudio).slice(0,80).map((x) =>
+                        <option key={x.id} value={x.id}>{x.label}{x.filesize ? " · " + formatBytes(Number(x.filesize)) : " · size unknown"}</option>
+                      )
+                      : <option value="">Inspect media first</option>}
                   </select>
                 </label>
                 <label className="block text-xs font-semibold text-slate-400">QUALITY / SOURCE
@@ -767,6 +806,26 @@ export default function App() {
               </div>
             )}
           </div>
+        {previewOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm" onClick={() => setPreviewOpen(false)}>
+            <div className="w-full max-w-4xl rounded-3xl border border-white/10 bg-slate-950 p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="mb-3 flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-white">Direct preview</p>
+                  <p className="truncate text-xs text-slate-500">{info?.title || "Selected media"}</p>
+                </div>
+                <button type="button" onClick={() => setPreviewOpen(false)} className="rounded-lg p-2 text-slate-400 hover:bg-white/10 hover:text-white"><X size={20}/></button>
+              </div>
+              <div className="overflow-hidden rounded-2xl bg-black">
+                {previewKind === "audio"
+                  ? <audio key={previewUrl} src={previewUrl} controls autoPlay className="w-full p-6" />
+                  : <video key={previewUrl} src={previewUrl} controls autoPlay playsInline className="max-h-[70vh] w-full" />}
+              </div>
+              <p className="mt-3 text-[11px] text-slate-500">Preview streams the selected source; it does not create a completed download first.</p>
+            </div>
+          </div>
+        )}
+
         </section>
       </main>
 
